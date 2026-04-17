@@ -117,6 +117,15 @@ class TeachingFlowIntegrationTest {
 		mockMvc.perform(get("/api/v1/experiments/{experimentId}/submissions", experimentId).cookie(teacherCookie))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.data.items[0].submittedBy.username").value("student1"));
+
+		mockMvc.perform(post("/api/v1/auth/logout").cookie(teacherCookie))
+			.andExpect(status().isOk())
+			.andExpect(result -> {
+				jakarta.servlet.http.Cookie cookie = result.getResponse().getCookie("lab_edu_token");
+				assertThat(cookie).isNotNull();
+				assertThat(cookie.getValue()).isEmpty();
+				assertThat(cookie.getMaxAge()).isZero();
+			});
 	}
 
 	private void registerUser(String username, String email, String password, String displayName, String role) throws Exception {

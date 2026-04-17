@@ -13,6 +13,7 @@ import edu.lab.core.config.JwtProperties;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -53,11 +54,25 @@ public class AuthController {
 			.path("/")
 			.sameSite("Lax")
 			.secure(false)
-			.maxAge(java.time.Duration.ofMinutes(jwtProperties.expirationMinutes()))
+			.maxAge(Duration.ofMinutes(jwtProperties.expirationMinutes()))
 			.build();
 		response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
 		LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(jwtProperties.expirationMinutes());
 		return ResponseEntity.ok(ApiResponse.ok(new AuthLoginResponse(toSummary(user), "Bearer", expiresAt)));
+	}
+
+	@PostMapping("/logout")
+	@Operation(summary = "用户退出登录")
+	public ResponseEntity<ApiResponse<Void>> logout(HttpServletResponse response) {
+		ResponseCookie cookie = ResponseCookie.from(COOKIE_NAME, "")
+			.httpOnly(true)
+			.path("/")
+			.sameSite("Lax")
+			.secure(false)
+			.maxAge(Duration.ZERO)
+			.build();
+		response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+		return ResponseEntity.ok(ApiResponse.ok(null));
 	}
 
 	@GetMapping("/me")

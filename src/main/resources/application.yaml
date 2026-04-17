@@ -1,6 +1,24 @@
 spring:
   application:
     name: core
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/lab_edu}
+    username: ${SPRING_DATASOURCE_USERNAME:lab_edu}
+    password: ${SPRING_DATASOURCE_PASSWORD:lab_edu}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
 
 management:
   endpoints:
@@ -15,3 +33,13 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+lab:
+  security:
+    jwt:
+      secret: ${LAB_SECURITY_JWT_SECRET:lab-edu-local-secret-change-me-lab-edu-local-secret-change-me}
+      expiration-minutes: ${LAB_SECURITY_JWT_EXPIRATION_MINUTES:120}
+  storage:
+    base-path: ${LAB_STORAGE_BASE_PATH:./data/uploads}
+  cors:
+    allowed-origins: ${LAB_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}

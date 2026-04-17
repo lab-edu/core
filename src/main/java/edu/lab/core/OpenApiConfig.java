@@ -11,7 +11,7 @@ import io.swagger.v3.oas.annotations.servers.Server;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@SecurityScheme(name = "basicAuth", type = SecuritySchemeType.HTTP, scheme = "basic")
+@SecurityScheme(name = "bearerAuth", type = SecuritySchemeType.HTTP, scheme = "bearer", bearerFormat = "JWT")
 @OpenAPIDefinition(
     info = @Info(
         title = "lab-edu core API",
@@ -24,7 +24,7 @@ import org.springframework.context.annotation.Configuration;
         @Server(url = "http://localhost:8080", description = "Local")
     },
     security = {
-        @SecurityRequirement(name = "basicAuth")
+        @SecurityRequirement(name = "bearerAuth")
     }
 )
 public class OpenApiConfig {

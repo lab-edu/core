@@ -49,11 +49,7 @@ public class AuthController {
 	public ResponseEntity<ApiResponse<AuthLoginResponse>> login(@Valid @RequestBody AuthLoginRequest request, HttpServletResponse response) {
 		AppUser user = userService.authenticate(request);
 		String token = jwtService.generateToken(user);
-		ResponseCookie cookie = ResponseCookie.from(COOKIE_NAME, token)
-			.httpOnly(true)
-			.path("/")
-			.sameSite("Lax")
-			.secure(false)
+		ResponseCookie cookie = buildCookie(COOKIE_NAME, token)
 			.maxAge(Duration.ofMinutes(jwtProperties.expirationMinutes()))
 			.build();
 		response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -64,11 +60,7 @@ public class AuthController {
 	@PostMapping("/logout")
 	@Operation(summary = "用户退出登录")
 	public ResponseEntity<ApiResponse<Void>> logout(HttpServletResponse response) {
-		ResponseCookie cookie = ResponseCookie.from(COOKIE_NAME, "")
-			.httpOnly(true)
-			.path("/")
-			.sameSite("Lax")
-			.secure(false)
+		ResponseCookie cookie = buildCookie(COOKIE_NAME, "")
 			.maxAge(Duration.ZERO)
 			.build();
 		response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -84,5 +76,20 @@ public class AuthController {
 
 	private UserSummaryResponse toSummary(AppUser user) {
 		return new UserSummaryResponse(user.getId(), user.getUsername(), user.getDisplayName(), user.getEmail(), user.getRole());
+	}
+
+	private ResponseCookie.ResponseCookieBuilder buildCookie(String name, String value) {
+		ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from(name, value)
+			.httpOnly(true)
+			.path("/")
+			.sameSite(jwtProperties.cookieSameSite())
+			.secure(jwtProperties.cookieSecure());
+
+		String cookieDomain = jwtProperties.cookieDomain();
+		if (cookieDomain != null && !cookieDomain.isBlank()) {
+			builder.domain(cookieDomain);
+		}
+
+		return builder;
 	}
 }

@@ -6,7 +6,6 @@ import edu.lab.core.submission.dto.SubmissionCreateResponse;
 import edu.lab.core.submission.dto.SubmissionDetailResponse;
 import edu.lab.core.submission.dto.SubmissionListResponse;
 import io.swagger.v3.oas.annotations.Operation;
-import jakarta.validation.constraints.NotNull;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;

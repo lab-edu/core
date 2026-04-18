@@ -39,6 +39,9 @@ lab:
     jwt:
       secret: ${LAB_SECURITY_JWT_SECRET:lab-edu-local-secret-change-me-lab-edu-local-secret-change-me}
       expiration-minutes: ${LAB_SECURITY_JWT_EXPIRATION_MINUTES:120}
+      cookie-secure: ${LAB_SECURITY_JWT_COOKIE_SECURE:false}
+      cookie-same-site: ${LAB_SECURITY_JWT_COOKIE_SAME_SITE:Lax}
+      cookie-domain: ${LAB_SECURITY_JWT_COOKIE_DOMAIN:}
   storage:
     base-path: ${LAB_STORAGE_BASE_PATH:./data/uploads}
   cors:

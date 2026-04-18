@@ -19,6 +19,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -83,6 +84,24 @@ class TeachingFlowIntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.data.course.id").value(courseId.toString()));
 
+		MvcResult createAnnouncementResult = mockMvc.perform(post("/api/v1/courses/{courseId}/announcements", courseId)
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"title":"实验提醒","content":"请在下周前完成实验一预习。"}
+					"""))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.announcement.title").value("实验提醒"))
+			.andReturn();
+
+		String announcementId = objectMapper.readTree(createAnnouncementResult.getResponse().getContentAsString())
+			.path("data").path("announcement").path("id").asText();
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/announcements", courseId).cookie(studentCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.items[0].id").value(announcementId))
+			.andExpect(jsonPath("$.data.items[0].title").value("实验提醒"));
+
 		MvcResult createExperimentResult = mockMvc.perform(post("/api/v1/courses/{courseId}/experiments", courseId)
 				.cookie(teacherCookie)
 				.contentType(MediaType.APPLICATION_JSON)
@@ -114,9 +133,65 @@ class TeachingFlowIntegrationTest {
 			.andExpect(status().isCreated())
 			.andExpect(jsonPath("$.data.submission.latest").value(true));
 
+		MockMultipartFile resourceFile = new MockMultipartFile(
+			"file",
+			"lecture.pdf",
+			"application/pdf",
+			"resource content".getBytes(StandardCharsets.UTF_8)
+		);
+
+		MvcResult createResourceResult = mockMvc.perform(multipart("/api/v1/courses/{courseId}/resources", courseId)
+				.file(resourceFile)
+				.param("name", "第一章课件")
+				.param("type", "FILE")
+				.param("category", "课件")
+				.cookie(teacherCookie))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.resource.name").value("第一章课件"))
+			.andReturn();
+
+		String resourceId = objectMapper.readTree(createResourceResult.getResponse().getContentAsString())
+			.path("data").path("resource").path("id").asText();
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/resources", courseId).cookie(studentCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.items[0].id").value(resourceId));
+
+		mockMvc.perform(get("/api/v1/resources/{resourceId}/file", resourceId).cookie(studentCookie))
+			.andExpect(status().isOk());
+
+		MvcResult teacherSubmissionsResult = mockMvc.perform(get("/api/v1/experiments/{experimentId}/submissions", experimentId).cookie(teacherCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.items[0].submittedBy.username").value("student1"))
+			.andReturn();
+
+		String submissionId = objectMapper.readTree(teacherSubmissionsResult.getResponse().getContentAsString())
+			.path("data").path("items").get(0).path("id").asText();
+
+		mockMvc.perform(patch("/api/v1/submissions/{submissionId}/grade", submissionId)
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"score":95,"feedback":"完成质量优秀"}
+					"""))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.score").value(95))
+			.andExpect(jsonPath("$.data.feedback").value("完成质量优秀"));
+
 		mockMvc.perform(get("/api/v1/experiments/{experimentId}/submissions", experimentId).cookie(teacherCookie))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.data.items[0].submittedBy.username").value("student1"));
+			.andExpect(jsonPath("$.data.items[0].submittedBy.username").value("student1"))
+			.andExpect(jsonPath("$.data.items[0].score").value(95));
+
+		mockMvc.perform(get("/api/v1/experiments/{experimentId}/submissions", experimentId).cookie(studentCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.items[0].score").value(95));
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/grades/overview", courseId).cookie(teacherCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.students[0].student.username").value("student1"))
+			.andExpect(jsonPath("$.data.students[0].gradedCount").value(1))
+			.andExpect(jsonPath("$.data.students[0].averageScore").value(95));
 
 		mockMvc.perform(post("/api/v1/auth/logout").cookie(teacherCookie))
 			.andExpect(status().isOk())

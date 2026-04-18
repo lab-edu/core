@@ -46,6 +46,13 @@ public class Submission extends AuditableEntity {
 	@Column(columnDefinition = "text")
 	private String feedback;
 
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "graded_by")
+	private AppUser gradedBy;
+
+	@Column(name = "graded_at")
+	private LocalDateTime gradedAt;
+
 	@Column(nullable = false)
 	private boolean latest;
 

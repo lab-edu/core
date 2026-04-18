@@ -14,6 +14,8 @@ public record SubmissionDetailResponse(
 	String note,
 	BigDecimal score,
 	String feedback,
+	UserSummaryResponse gradedBy,
+	LocalDateTime gradedAt,
 	boolean latest,
 	LocalDateTime submittedAt
 ) {

@@ -84,6 +84,24 @@ class TeachingFlowIntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.data.course.id").value(courseId.toString()));
 
+		MvcResult createAnnouncementResult = mockMvc.perform(post("/api/v1/courses/{courseId}/announcements", courseId)
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"title":"实验提醒","content":"请在下周前完成实验一预习。"}
+					"""))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.announcement.title").value("实验提醒"))
+			.andReturn();
+
+		String announcementId = objectMapper.readTree(createAnnouncementResult.getResponse().getContentAsString())
+			.path("data").path("announcement").path("id").asText();
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/announcements", courseId).cookie(studentCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.items[0].id").value(announcementId))
+			.andExpect(jsonPath("$.data.items[0].title").value("实验提醒"));
+
 		MvcResult createExperimentResult = mockMvc.perform(post("/api/v1/courses/{courseId}/experiments", courseId)
 				.cookie(teacherCookie)
 				.contentType(MediaType.APPLICATION_JSON)

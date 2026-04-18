@@ -1,5 +1,6 @@
 package edu.lab.core.storage;
 
+import edu.lab.core.common.exception.NotFoundException;
 import edu.lab.core.config.StorageProperties;
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,8 +21,7 @@ public class FileStorageService {
 
 	public StoredFile saveSubmissionFile(UUID submissionId, MultipartFile file) {
 		try {
-			Path basePath = Path.of(storageProperties.basePath()).toAbsolutePath().normalize();
-			Files.createDirectories(basePath);
+			Path basePath = getBasePath();
 			String originalName = sanitizeName(file.getOriginalFilename());
 			Path directory = basePath.resolve("submissions").resolve(submissionId.toString());
 			Files.createDirectories(directory);
@@ -33,6 +33,45 @@ public class FileStorageService {
 		} catch (IOException exception) {
 			throw new IllegalStateException("文件保存失败", exception);
 		}
+	}
+
+	public StoredFile saveResourceFile(UUID courseId, UUID resourceId, MultipartFile file) {
+		try {
+			Path basePath = getBasePath();
+			String originalName = sanitizeName(file.getOriginalFilename());
+			Path directory = basePath.resolve("resources").resolve(courseId.toString()).resolve(resourceId.toString());
+			Files.createDirectories(directory);
+			Path target = directory.resolve(originalName);
+			try (InputStream inputStream = file.getInputStream()) {
+				Files.copy(inputStream, target, StandardCopyOption.REPLACE_EXISTING);
+			}
+			return new StoredFile(target.toAbsolutePath().toString(), originalName, file.getContentType());
+		} catch (IOException exception) {
+			throw new IllegalStateException("文件保存失败", exception);
+		}
+	}
+
+	public StoredContent openFile(String filePath, String fileName, String contentType) {
+		try {
+			Path path = Path.of(filePath).toAbsolutePath().normalize();
+			Path basePath = getBasePath();
+			if (!path.startsWith(basePath)) {
+				throw new IllegalStateException("文件路径不合法");
+			}
+			if (!Files.exists(path) || !Files.isRegularFile(path)) {
+				throw new NotFoundException("文件不存在或已失效");
+			}
+			long fileSize = Files.size(path);
+			return new StoredContent(Files.newInputStream(path), fileSize, contentType, fileName);
+		} catch (IOException exception) {
+			throw new IllegalStateException("读取文件失败", exception);
+		}
+	}
+
+	private Path getBasePath() throws IOException {
+		Path basePath = Path.of(storageProperties.basePath()).toAbsolutePath().normalize();
+		Files.createDirectories(basePath);
+		return basePath;
 	}
 
 	private String sanitizeName(String originalFilename) {
@@ -47,5 +86,8 @@ public class FileStorageService {
 	}
 
 	public record StoredFile(String filePath, String fileName, String contentType) {
+	}
+
+	public record StoredContent(InputStream inputStream, long size, String contentType, String fileName) {
 	}
 }

@@ -11,6 +11,7 @@ import edu.lab.core.course.CourseService;
 import edu.lab.core.course.learning.dto.CourseLearningDetailResponse;
 import edu.lab.core.course.learning.dto.CourseHomeworkItemResponse;
 import edu.lab.core.course.learning.dto.CourseLearningOverviewResponse;
+import edu.lab.core.course.learning.dto.CourseLearningPointOrderUpdateRequest;
 import edu.lab.core.course.learning.dto.CourseLearningPointResponse;
 import edu.lab.core.course.learning.dto.LearningTaskProgressResponse;
 import edu.lab.core.course.learning.dto.CourseLearningTaskSubmissionResponse;
@@ -20,6 +21,7 @@ import edu.lab.core.course.learning.dto.LearningTaskOrderUpdateRequest;
 import edu.lab.core.course.learning.dto.LearningPointCreateRequest;
 import edu.lab.core.course.learning.dto.LearningTaskGradeRequest;
 import edu.lab.core.course.learning.dto.LearningUnitCreateRequest;
+import edu.lab.core.course.learning.dto.LearningUnitOrderUpdateRequest;
 import edu.lab.core.notification.HomeworkReminderService;
 import edu.lab.core.course.learning.dto.StudentLearningOverviewResponse;
 import edu.lab.core.security.AuthenticatedUser;
@@ -130,6 +132,35 @@ public class CourseLearningService {
 	}
 
 	@Transactional
+	public void reorderUnits(AuthenticatedUser currentUser, UUID courseId, LearningUnitOrderUpdateRequest request) {
+		courseService.requireTeachingCourse(currentUser.id(), courseId);
+		if (request == null || request.orderedUnitIds() == null || request.orderedUnitIds().isEmpty()) {
+			throw new BadRequestException("单元排序数据不能为空");
+		}
+
+		List<CourseLearningUnit> existingUnits = unitRepository.findByCourseIdOrderBySortOrderAscCreatedAtAsc(courseId);
+		if (existingUnits.size() != request.orderedUnitIds().size()) {
+			throw new BadRequestException("排序单元数量不匹配");
+		}
+
+		Map<UUID, CourseLearningUnit> unitMap = new HashMap<>();
+		for (CourseLearningUnit unit : existingUnits) {
+			unitMap.put(unit.getId(), unit);
+		}
+
+		int order = 10;
+		for (UUID unitId : request.orderedUnitIds()) {
+			CourseLearningUnit unit = unitMap.get(unitId);
+			if (unit == null) {
+				throw new BadRequestException("排序单元不属于该课程");
+			}
+			unit.setSortOrder(order);
+			order += 10;
+		}
+		unitRepository.saveAll(existingUnits);
+	}
+
+	@Transactional
 	public CourseLearningPointResponse createPoint(AuthenticatedUser currentUser, UUID courseId, UUID unitId, LearningPointCreateRequest request) {
 		CourseLearningUnit unit = requireUnitInCourse(currentUser.id(), courseId, unitId, true);
 		AppUser creator = requireUser(currentUser.id());
@@ -142,6 +173,35 @@ public class CourseLearningService {
 		point.setSortOrder(normalizeSortOrder(request.sortOrder()));
 		point = pointRepository.save(point);
 		return toPointResponse(point, List.of());
+	}
+
+	@Transactional
+	public void reorderPoints(AuthenticatedUser currentUser, UUID courseId, UUID unitId, CourseLearningPointOrderUpdateRequest request) {
+		requireUnitInCourse(currentUser.id(), courseId, unitId, true);
+		if (request == null || request.orderedPointIds() == null || request.orderedPointIds().isEmpty()) {
+			throw new BadRequestException("知识点排序数据不能为空");
+		}
+
+		List<CourseLearningPoint> existingPoints = pointRepository.findByUnitIdOrderBySortOrderAscCreatedAtAsc(unitId);
+		if (existingPoints.size() != request.orderedPointIds().size()) {
+			throw new BadRequestException("排序知识点数量不匹配");
+		}
+
+		Map<UUID, CourseLearningPoint> pointMap = new HashMap<>();
+		for (CourseLearningPoint point : existingPoints) {
+			pointMap.put(point.getId(), point);
+		}
+
+		int order = 10;
+		for (UUID pointId : request.orderedPointIds()) {
+			CourseLearningPoint point = pointMap.get(pointId);
+			if (point == null) {
+				throw new BadRequestException("排序知识点不属于该学习单元");
+			}
+			point.setSortOrder(order);
+			order += 10;
+		}
+		pointRepository.saveAll(existingPoints);
 	}
 
 	@Transactional

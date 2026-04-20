@@ -10,6 +10,7 @@ import edu.lab.core.course.learning.dto.CourseLearningTaskSubmissionCreateRespon
 import edu.lab.core.course.learning.dto.CourseLearningTaskSubmissionListResponse;
 import edu.lab.core.course.learning.dto.CourseLearningTaskSubmissionResponse;
 import edu.lab.core.course.learning.dto.CourseLearningTaskSummaryResponse;
+import edu.lab.core.course.learning.dto.CourseLearningPointOrderUpdateRequest;
 import edu.lab.core.course.learning.dto.CourseLearningUnitCreateResponse;
 import edu.lab.core.course.learning.dto.CourseLearningUnitResponse;
 import edu.lab.core.course.learning.dto.CourseHomeworkListResponse;
@@ -17,6 +18,7 @@ import edu.lab.core.course.learning.dto.LearningTaskOrderUpdateRequest;
 import edu.lab.core.course.learning.dto.LearningPointCreateRequest;
 import edu.lab.core.course.learning.dto.LearningTaskGradeRequest;
 import edu.lab.core.course.learning.dto.LearningUnitCreateRequest;
+import edu.lab.core.course.learning.dto.LearningUnitOrderUpdateRequest;
 import edu.lab.core.security.AuthenticatedUser;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
@@ -69,6 +71,15 @@ public class CourseLearningController {
 		return ResponseEntity.status(201).body(ApiResponse.created(courseLearningService.createUnit(currentUser, courseId, request)));
 	}
 
+	@PatchMapping("/units/order")
+	@Operation(summary = "教师拖拽重排学习单元")
+	public ResponseEntity<ApiResponse<CourseLearningDetailResponse>> reorderUnits(@AuthenticationPrincipal AuthenticatedUser currentUser,
+		@PathVariable UUID courseId,
+		@Valid @RequestBody LearningUnitOrderUpdateRequest request) {
+		courseLearningService.reorderUnits(currentUser, courseId, request);
+		return ResponseEntity.ok(ApiResponse.ok(courseLearningService.getLearningDetail(currentUser, courseId)));
+	}
+
 	@PostMapping("/units/{unitId}/points")
 	@Operation(summary = "创建知识点")
 	public ResponseEntity<ApiResponse<CourseLearningPointResponse>> createPoint(@AuthenticationPrincipal AuthenticatedUser currentUser,
@@ -76,6 +87,16 @@ public class CourseLearningController {
 		@PathVariable UUID unitId,
 		@Valid @RequestBody LearningPointCreateRequest request) {
 		return ResponseEntity.status(201).body(ApiResponse.created(courseLearningService.createPoint(currentUser, courseId, unitId, request)));
+	}
+
+	@PatchMapping("/units/{unitId}/points/order")
+	@Operation(summary = "教师拖拽重排知识点")
+	public ResponseEntity<ApiResponse<CourseLearningDetailResponse>> reorderPoints(@AuthenticationPrincipal AuthenticatedUser currentUser,
+		@PathVariable UUID courseId,
+		@PathVariable UUID unitId,
+		@Valid @RequestBody CourseLearningPointOrderUpdateRequest request) {
+		courseLearningService.reorderPoints(currentUser, courseId, unitId, request);
+		return ResponseEntity.ok(ApiResponse.ok(courseLearningService.getLearningDetail(currentUser, courseId)));
 	}
 
 	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE, value = "/points/{pointId}/tasks")

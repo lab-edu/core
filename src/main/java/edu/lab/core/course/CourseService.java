@@ -10,11 +10,13 @@ import edu.lab.core.course.dto.CourseMemberResponse;
 import edu.lab.core.course.dto.CourseSummaryResponse;
 import edu.lab.core.experiment.ExperimentRepository;
 import edu.lab.core.experiment.dto.ExperimentSummaryResponse;
+import edu.lab.core.notification.HomeworkReminderService;
 import edu.lab.core.security.AuthenticatedUser;
 import edu.lab.core.user.AppUser;
 import edu.lab.core.user.UserRole;
 import edu.lab.core.user.UserRepository;
 import edu.lab.core.user.dto.UserSummaryResponse;
+import edu.lab.core.course.workspace.CourseWorkspaceService;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.List;
@@ -34,6 +36,8 @@ public class CourseService {
 	private final CourseMemberRepository courseMemberRepository;
 	private final ExperimentRepository experimentRepository;
 	private final UserRepository userRepository;
+	private final CourseWorkspaceService workspaceService;
+	private final HomeworkReminderService homeworkReminderService;
 
 	@Transactional
 	public CourseSummaryResponse createCourse(AuthenticatedUser currentUser, CourseCreateRequest request) {
@@ -44,6 +48,7 @@ public class CourseService {
 		course.setOwner(user);
 		course.setInviteCode(generateUniqueInviteCode());
 		course = courseRepository.save(course);
+		workspaceService.ensureDefaultWorkspaceModules(course.getId());
 
 		CourseMember member = new CourseMember();
 		member.setCourse(course);
@@ -111,6 +116,7 @@ public class CourseService {
 		member.setUser(user);
 		member.setMemberRole(CourseMemberRole.STUDENT);
 		courseMemberRepository.save(member);
+		homeworkReminderService.scheduleForStudentJoinedCourse(course.getId(), user.getId());
 		return toSummary(course, courseMemberRepository.findMembers(course.getId()).size());
 	}
 

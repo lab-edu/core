@@ -51,6 +51,38 @@ public class FileStorageService {
 		}
 	}
 
+	public StoredFile saveLearningTaskFile(UUID courseId, UUID taskId, MultipartFile file) {
+		try {
+			Path basePath = getBasePath();
+			String originalName = sanitizeName(file.getOriginalFilename());
+			Path directory = basePath.resolve("learning").resolve("tasks").resolve(courseId.toString()).resolve(taskId.toString());
+			Files.createDirectories(directory);
+			Path target = directory.resolve(originalName);
+			try (InputStream inputStream = file.getInputStream()) {
+				Files.copy(inputStream, target, StandardCopyOption.REPLACE_EXISTING);
+			}
+			return new StoredFile(target.toAbsolutePath().toString(), originalName, file.getContentType());
+		} catch (IOException exception) {
+			throw new IllegalStateException("文件保存失败", exception);
+		}
+	}
+
+	public StoredFile saveLearningTaskSubmissionFile(UUID taskId, UUID submissionId, MultipartFile file) {
+		try {
+			Path basePath = getBasePath();
+			String originalName = sanitizeName(file.getOriginalFilename());
+			Path directory = basePath.resolve("learning").resolve("task-submissions").resolve(taskId.toString()).resolve(submissionId.toString());
+			Files.createDirectories(directory);
+			Path target = directory.resolve(originalName);
+			try (InputStream inputStream = file.getInputStream()) {
+				Files.copy(inputStream, target, StandardCopyOption.REPLACE_EXISTING);
+			}
+			return new StoredFile(target.toAbsolutePath().toString(), originalName, file.getContentType());
+		} catch (IOException exception) {
+			throw new IllegalStateException("文件保存失败", exception);
+		}
+	}
+
 	public StoredContent openFile(String filePath, String fileName, String contentType) {
 		try {
 			Path path = Path.of(filePath).toAbsolutePath().normalize();

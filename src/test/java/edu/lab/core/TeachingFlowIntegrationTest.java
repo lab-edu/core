@@ -203,6 +203,128 @@ class TeachingFlowIntegrationTest {
 			});
 	}
 
+	@Test
+	void courseLearningStructureSubmissionAndGradingFlowWorks() throws Exception {
+		registerUser("teacher2", "teacher2@example.com", "Password123!", "教师二号", "TEACHER");
+		var teacherCookie = login("teacher2", "Password123!");
+
+		MvcResult createCourseResult = mockMvc.perform(post("/api/v1/courses")
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"title":"课程学习","description":"学习结构"}
+					"""))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.course.title").value("课程学习"))
+			.andReturn();
+
+		JsonNode courseNode = objectMapper.readTree(createCourseResult.getResponse().getContentAsString()).path("data").path("course");
+		UUID courseId = UUID.fromString(courseNode.path("id").asText());
+
+		registerUser("student2", "student2@example.com", "Password123!", "学生二号", "STUDENT");
+		var studentCookie = login("student2", "Password123!");
+
+		mockMvc.perform(post("/api/v1/courses/join")
+				.cookie(studentCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"inviteCode":"%s"}
+					""".formatted(courseNode.path("inviteCode").asText())))
+			.andExpect(status().isOk());
+
+		MvcResult unitResult = mockMvc.perform(post("/api/v1/courses/{courseId}/learning/units", courseId)
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"title":"第一单元","description":"课程导论","sortOrder":1,"published":true}
+					"""))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.title").value("第一单元"))
+			.andReturn();
+
+		UUID unitId = UUID.fromString(objectMapper.readTree(unitResult.getResponse().getContentAsString()).path("data").path("id").asText());
+
+		MvcResult pointResult = mockMvc.perform(post("/api/v1/courses/{courseId}/learning/units/{unitId}/points", courseId, unitId)
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"title":"知识点一","summary":"基础概念","estimatedMinutes":20,"sortOrder":1}
+					"""))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.title").value("知识点一"))
+			.andReturn();
+
+		UUID pointId = UUID.fromString(objectMapper.readTree(pointResult.getResponse().getContentAsString()).path("data").path("id").asText());
+
+		MvcResult mediaTaskResult = mockMvc.perform(multipart("/api/v1/courses/{courseId}/learning/points/{pointId}/tasks", courseId, pointId)
+				.cookie(teacherCookie)
+				.param("title", "媒体学习任务")
+				.param("taskType", "MEDIA")
+				.param("materialType", "TEXT")
+				.param("contentText", "请阅读这段课程导语。")
+				.param("maxScore", "10"))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.title").value("媒体学习任务"))
+			.andReturn();
+
+		String mediaTaskId = objectMapper.readTree(mediaTaskResult.getResponse().getContentAsString()).path("data").path("id").asText();
+
+		MvcResult quizTaskResult = mockMvc.perform(multipart("/api/v1/courses/{courseId}/learning/points/{pointId}/tasks", courseId, pointId)
+				.cookie(teacherCookie)
+				.param("title", "随堂测试一")
+				.param("taskType", "QUIZ")
+				.param("questionType", "SINGLE_CHOICE")
+				.param("optionsText", "A. 错误\nB. 正确\nC. 其他")
+				.param("referenceAnswer", "B")
+				.param("maxScore", "100")
+				.param("required", "true"))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.title").value("随堂测试一"))
+			.andReturn();
+
+		UUID quizTaskId = UUID.fromString(objectMapper.readTree(quizTaskResult.getResponse().getContentAsString()).path("data").path("id").asText());
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/learning", courseId).cookie(studentCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.units[0].points[0].tasks[1].title").value("随堂测试一"));
+
+		MvcResult submissionResult = mockMvc.perform(multipart("/api/v1/courses/{courseId}/learning/tasks/{taskId}/submissions", courseId, quizTaskId)
+				.cookie(studentCookie)
+				.param("answerText", "B"))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.latest").value(true))
+			.andReturn();
+
+		String submissionId = objectMapper.readTree(submissionResult.getResponse().getContentAsString()).path("data").path("id").asText();
+
+		mockMvc.perform(patch("/api/v1/courses/{courseId}/learning/submissions/{submissionId}/grade", courseId, submissionId)
+				.cookie(teacherCookie)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{"score":92.5,"feedback":"知识点掌握良好"}
+					"""))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.score").value(92.5));
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/learning/tasks/{taskId}/submissions", courseId, quizTaskId).cookie(teacherCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.items[0].submittedBy.username").value("student2"))
+			.andExpect(jsonPath("$.data.items[0].score").value(92.5));
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/learning/tasks/{taskId}/submissions/latest", courseId, quizTaskId).cookie(studentCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.score").value(92.5));
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/learning/overview", courseId).cookie(teacherCookie))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.students[0].student.username").value("student2"))
+			.andExpect(jsonPath("$.data.students[0].gradedCount").value(1))
+			.andExpect(jsonPath("$.data.students[0].averageScore").value(92.5));
+
+		mockMvc.perform(get("/api/v1/courses/{courseId}/learning/tasks/{taskId}/file", courseId, mediaTaskId).cookie(studentCookie))
+			.andExpect(status().isBadRequest());
+	}
+
 	private void registerUser(String username, String email, String password, String displayName, String role) throws Exception {
 		mockMvc.perform(post("/api/v1/auth/register")
 				.contentType(MediaType.APPLICATION_JSON)

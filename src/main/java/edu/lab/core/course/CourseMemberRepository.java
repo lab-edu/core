@@ -20,6 +20,12 @@ public interface CourseMemberRepository extends JpaRepository<CourseMember, UUID
 	@Query("select distinct m.course from CourseMember m where m.user.id = :userId and m.memberRole = :memberRole order by m.course.createdAt desc")
 	List<Course> findCoursesByMemberRole(@Param("userId") UUID userId, @Param("memberRole") CourseMemberRole memberRole);
 
+	@Query("select m.user.id from CourseMember m where m.course.id = :courseId and m.memberRole = 'STUDENT'")
+	List<UUID> findStudentIdsByCourseId(@Param("courseId") UUID courseId);
+
+	@Query("select distinct m.course.id from CourseMember m where m.user.id = :userId")
+	List<UUID> findCourseIdsByUserId(@Param("userId") UUID userId);
+
 	@Modifying
 	@Query("delete from CourseMember m where m.course.id = :courseId and m.user.id = :userId")
 	int deleteByCourseIdAndUserId(@Param("courseId") UUID courseId, @Param("userId") UUID userId);

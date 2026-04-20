@@ -12,6 +12,8 @@ import edu.lab.core.course.learning.dto.CourseLearningTaskSubmissionResponse;
 import edu.lab.core.course.learning.dto.CourseLearningTaskSummaryResponse;
 import edu.lab.core.course.learning.dto.CourseLearningUnitCreateResponse;
 import edu.lab.core.course.learning.dto.CourseLearningUnitResponse;
+import edu.lab.core.course.learning.dto.CourseHomeworkListResponse;
+import edu.lab.core.course.learning.dto.LearningTaskOrderUpdateRequest;
 import edu.lab.core.course.learning.dto.LearningPointCreateRequest;
 import edu.lab.core.course.learning.dto.LearningTaskGradeRequest;
 import edu.lab.core.course.learning.dto.LearningUnitCreateRequest;
@@ -19,6 +21,7 @@ import edu.lab.core.security.AuthenticatedUser;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
@@ -83,6 +86,7 @@ public class CourseLearningController {
 		@RequestParam("title") String title,
 		@RequestParam(value = "description", required = false) String description,
 		@RequestParam(value = "taskType", required = false) LearningTaskType taskType,
+		@RequestParam(value = "taskKind", required = false) LearningTaskKind taskKind,
 		@RequestParam(value = "materialType", required = false) LearningMaterialType materialType,
 		@RequestParam(value = "contentText", required = false) String contentText,
 		@RequestParam(value = "mediaUrl", required = false) String mediaUrl,
@@ -90,6 +94,11 @@ public class CourseLearningController {
 		@RequestParam(value = "optionsText", required = false) String optionsText,
 		@RequestParam(value = "referenceAnswer", required = false) String referenceAnswer,
 		@RequestParam(value = "maxScore", required = false) BigDecimal maxScore,
+		@RequestParam(value = "startAt", required = false) LocalDateTime startAt,
+		@RequestParam(value = "dueAt", required = false) LocalDateTime dueAt,
+		@RequestParam(value = "notifyOnStart", required = false) Boolean notifyOnStart,
+		@RequestParam(value = "notifyBeforeDue24h", required = false) Boolean notifyBeforeDue24h,
+		@RequestParam(value = "notifyOnDue", required = false) Boolean notifyOnDue,
 		@RequestParam(value = "required", required = false) Boolean required,
 		@RequestParam(value = "sortOrder", required = false) Integer sortOrder,
 		@RequestParam(value = "file", required = false) MultipartFile file) {
@@ -100,6 +109,7 @@ public class CourseLearningController {
 			title,
 			description,
 			taskType,
+			taskKind,
 			materialType,
 			contentText,
 			mediaUrl,
@@ -107,9 +117,38 @@ public class CourseLearningController {
 			optionsText,
 			referenceAnswer,
 			maxScore,
+			startAt,
+			dueAt,
+			notifyOnStart,
+			notifyBeforeDue24h,
+			notifyOnDue,
 			required,
 			sortOrder,
 			file)));
+	}
+
+	@PatchMapping("/points/{pointId}/tasks/order")
+	@Operation(summary = "教师拖拽重排知识点任务")
+	public ResponseEntity<ApiResponse<CourseLearningDetailResponse>> reorderTasks(@AuthenticationPrincipal AuthenticatedUser currentUser,
+		@PathVariable UUID courseId,
+		@PathVariable UUID pointId,
+		@Valid @RequestBody LearningTaskOrderUpdateRequest request) {
+		courseLearningService.reorderTasks(currentUser, courseId, pointId, request);
+		return ResponseEntity.ok(ApiResponse.ok(courseLearningService.getLearningDetail(currentUser, courseId)));
+	}
+
+	@GetMapping("/homeworks")
+	@Operation(summary = "课程作业汇总")
+	public ResponseEntity<ApiResponse<CourseHomeworkListResponse>> courseHomeworks(@AuthenticationPrincipal AuthenticatedUser currentUser,
+		@PathVariable UUID courseId) {
+		return ResponseEntity.ok(ApiResponse.ok(new CourseHomeworkListResponse(courseLearningService.listCourseHomeworks(currentUser, courseId))));
+	}
+
+	@GetMapping("/my-homeworks")
+	@Operation(summary = "当前用户作业汇总")
+	public ResponseEntity<ApiResponse<CourseHomeworkListResponse>> myHomeworks(@AuthenticationPrincipal AuthenticatedUser currentUser,
+		@PathVariable UUID courseId) {
+		return ResponseEntity.ok(ApiResponse.ok(new CourseHomeworkListResponse(courseLearningService.listMyHomeworks(currentUser, courseId))));
 	}
 
 	@GetMapping("/tasks/{taskId}/file")

@@ -2,6 +2,7 @@ package edu.lab.core.course.learning.dto;
 
 import edu.lab.core.course.learning.LearningMaterialType;
 import edu.lab.core.course.learning.LearningQuestionType;
+import edu.lab.core.course.learning.LearningTaskKind;
 import edu.lab.core.course.learning.LearningTaskType;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -15,9 +16,12 @@ public record LearningTaskProgressResponse(
 	UUID taskId,
 	String taskTitle,
 	LearningTaskType taskType,
+	LearningTaskKind taskKind,
 	LearningMaterialType materialType,
 	LearningQuestionType questionType,
 	BigDecimal maxScore,
+	LocalDateTime startAt,
+	LocalDateTime dueAt,
 	UUID submissionId,
 	String answerText,
 	String fileName,

@@ -4,19 +4,23 @@ import edu.lab.core.common.exception.BadRequestException;
 import edu.lab.core.common.exception.ForbiddenException;
 import edu.lab.core.common.exception.NotFoundException;
 import edu.lab.core.course.Course;
+import edu.lab.core.course.CourseRepository;
 import edu.lab.core.course.CourseMemberRepository;
 import edu.lab.core.course.CourseMemberRole;
 import edu.lab.core.course.CourseService;
 import edu.lab.core.course.learning.dto.CourseLearningDetailResponse;
+import edu.lab.core.course.learning.dto.CourseHomeworkItemResponse;
 import edu.lab.core.course.learning.dto.CourseLearningOverviewResponse;
 import edu.lab.core.course.learning.dto.CourseLearningPointResponse;
 import edu.lab.core.course.learning.dto.LearningTaskProgressResponse;
 import edu.lab.core.course.learning.dto.CourseLearningTaskSubmissionResponse;
 import edu.lab.core.course.learning.dto.CourseLearningTaskSummaryResponse;
 import edu.lab.core.course.learning.dto.CourseLearningUnitResponse;
+import edu.lab.core.course.learning.dto.LearningTaskOrderUpdateRequest;
 import edu.lab.core.course.learning.dto.LearningPointCreateRequest;
 import edu.lab.core.course.learning.dto.LearningTaskGradeRequest;
 import edu.lab.core.course.learning.dto.LearningUnitCreateRequest;
+import edu.lab.core.notification.HomeworkReminderService;
 import edu.lab.core.course.learning.dto.StudentLearningOverviewResponse;
 import edu.lab.core.security.AuthenticatedUser;
 import edu.lab.core.storage.FileStorageService;
@@ -31,6 +35,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -50,11 +55,13 @@ public class CourseLearningService {
 
 	private final CourseService courseService;
 	private final CourseMemberRepository courseMemberRepository;
+	private final CourseRepository courseRepository;
 	private final UserRepository userRepository;
 	private final CourseLearningUnitRepository unitRepository;
 	private final CourseLearningPointRepository pointRepository;
 	private final CourseLearningTaskRepository taskRepository;
 	private final CourseLearningTaskSubmissionRepository submissionRepository;
+	private final HomeworkReminderService homeworkReminderService;
 	private final FileStorageService fileStorageService;
 	private final ObjectMapper objectMapper;
 
@@ -144,6 +151,7 @@ public class CourseLearningService {
 		String title,
 		String description,
 		LearningTaskType taskType,
+		LearningTaskKind taskKind,
 		LearningMaterialType materialType,
 		String contentText,
 		String mediaUrl,
@@ -151,28 +159,40 @@ public class CourseLearningService {
 		String optionsText,
 		String referenceAnswer,
 		BigDecimal maxScore,
+		LocalDateTime startAt,
+		LocalDateTime dueAt,
+		Boolean notifyOnStart,
+		Boolean notifyBeforeDue24h,
+		Boolean notifyOnDue,
 		Boolean required,
 		Integer sortOrder,
 		MultipartFile file) {
 		CourseLearningPoint point = requirePointInCourse(currentUser.id(), courseId, pointId, true);
 		AppUser creator = requireUser(currentUser.id());
 		LearningTaskType effectiveTaskType = taskType != null ? taskType : (questionType != null ? LearningTaskType.QUIZ : LearningTaskType.MEDIA);
+		LearningTaskKind effectiveTaskKind = taskKind == null ? LearningTaskKind.LEARNING : taskKind;
 		CourseLearningTask task = new CourseLearningTask();
 		task.setKnowledgePoint(point);
 		task.setCreatedBy(creator);
 		task.setTitle(normalizeTitle(title, "任务标题不能为空"));
 		task.setDescription(normalizeNullableText(description));
 		task.setTaskType(effectiveTaskType);
+		task.setTaskKind(effectiveTaskKind);
 		task.setMaterialType(materialType);
 		task.setContentText(normalizeNullableText(contentText));
 		task.setMediaUrl(normalizeNullableText(mediaUrl));
 		task.setQuestionType(questionType);
 		task.setReferenceAnswer(normalizeNullableText(referenceAnswer));
 		task.setMaxScore(maxScore == null ? BigDecimal.valueOf(10) : maxScore);
+		task.setStartAt(startAt);
+		task.setDueAt(dueAt);
+		task.setNotifyOnStart(notifyOnStart == null || notifyOnStart);
+		task.setNotifyBeforeDue24h(notifyBeforeDue24h == null || notifyBeforeDue24h);
+		task.setNotifyOnDue(notifyOnDue == null || notifyOnDue);
 		task.setRequired(required == null || required);
 		task.setSortOrder(normalizeSortOrder(sortOrder));
 		task.setOptionsJson(writeOptions(effectiveTaskType, questionType, optionsText));
-		validateTaskPayload(effectiveTaskType, materialType, questionType, file, task.getMediaUrl(), task.getContentText(), task.getOptionsJson());
+		validateTaskPayload(effectiveTaskType, effectiveTaskKind, materialType, questionType, file, task.getMediaUrl(), task.getContentText(), task.getOptionsJson(), task.getStartAt(), task.getDueAt());
 		task = taskRepository.save(task);
 
 		if (task.getTaskType() == LearningTaskType.MEDIA && task.getMaterialType() == LearningMaterialType.FILE && file != null && !file.isEmpty()) {
@@ -183,7 +203,69 @@ public class CourseLearningService {
 			task = taskRepository.save(task);
 		}
 
+		if (task.getTaskKind() == LearningTaskKind.HOMEWORK) {
+			homeworkReminderService.scheduleForHomeworkTask(task);
+		}
+
 		return toTaskResponse(task);
+	}
+
+	@Transactional
+	public void reorderTasks(AuthenticatedUser currentUser, UUID courseId, UUID pointId, LearningTaskOrderUpdateRequest request) {
+		requirePointInCourse(currentUser.id(), courseId, pointId, true);
+		if (request == null || request.orderedTaskIds() == null || request.orderedTaskIds().isEmpty()) {
+			throw new BadRequestException("任务排序数据不能为空");
+		}
+
+		List<CourseLearningTask> existingTasks = taskRepository.findByKnowledgePointIdOrderBySortOrderAscCreatedAtAsc(pointId);
+		if (existingTasks.size() != request.orderedTaskIds().size()) {
+			throw new BadRequestException("排序任务数量不匹配");
+		}
+
+		Map<UUID, CourseLearningTask> taskMap = new HashMap<>();
+		for (CourseLearningTask task : existingTasks) {
+			taskMap.put(task.getId(), task);
+		}
+
+		int order = 10;
+		for (UUID taskId : request.orderedTaskIds()) {
+			CourseLearningTask task = taskMap.get(taskId);
+			if (task == null) {
+				throw new BadRequestException("排序任务不属于该知识点");
+			}
+			task.setSortOrder(order);
+			order += 10;
+		}
+		taskRepository.saveAll(existingTasks);
+	}
+
+	@Transactional(readOnly = true)
+	public List<CourseHomeworkItemResponse> listCourseHomeworks(AuthenticatedUser currentUser, UUID courseId) {
+		courseService.requireAccessibleCourse(currentUser.id(), courseId);
+		List<CourseLearningTask> tasks = taskRepository.findHomeworkByCourseId(courseId);
+		return toHomeworkItems(currentUser, tasks);
+	}
+
+	@Transactional(readOnly = true)
+	public List<CourseHomeworkItemResponse> listMyHomeworks(AuthenticatedUser currentUser, UUID courseId) {
+		courseService.requireAccessibleCourse(currentUser.id(), courseId);
+		List<CourseLearningTask> tasks = taskRepository.findHomeworkByCourseId(courseId);
+		return toHomeworkItems(currentUser, tasks);
+	}
+
+	@Transactional(readOnly = true)
+	public List<CourseHomeworkItemResponse> listMyHomeworksAcrossCourses(AuthenticatedUser currentUser) {
+		AppUser user = requireUser(currentUser.id());
+		List<UUID> courseIds;
+		if (user.getRole() == UserRole.TEACHER || user.getRole() == UserRole.ADMIN) {
+			courseIds = courseRepository.findOwnedCourses(user.getId()).stream().map(Course::getId).toList();
+		} else {
+			courseIds = courseMemberRepository.findCourseIdsByUserId(user.getId());
+		}
+		if (courseIds.isEmpty()) {
+			return List.of();
+		}
+		return toHomeworkItems(currentUser, taskRepository.findHomeworkByCourseIds(courseIds));
 	}
 
 	@Transactional(readOnly = true)
@@ -299,9 +381,12 @@ public class CourseLearningService {
 						task.getId(),
 						task.getTitle(),
 						task.getTaskType(),
+						task.getTaskKind(),
 						task.getMaterialType(),
 						task.getQuestionType(),
 						task.getMaxScore(),
+						task.getStartAt(),
+						task.getDueAt(),
 						submission == null ? null : submission.getId(),
 						submission == null ? null : submission.getAnswerText(),
 						submission == null ? null : submission.getFileName(),
@@ -370,6 +455,7 @@ public class CourseLearningService {
 			task.getTitle(),
 			task.getDescription(),
 			task.getTaskType(),
+			task.getTaskKind(),
 			task.getMaterialType(),
 			task.getQuestionType(),
 			task.getContentText(),
@@ -378,11 +464,72 @@ public class CourseLearningService {
 			readOptions(task.getOptionsJson()),
 			task.getReferenceAnswer(),
 			task.getMaxScore(),
+			task.getStartAt(),
+			task.getDueAt(),
+			task.isNotifyOnStart(),
+			task.isNotifyBeforeDue24h(),
+			task.isNotifyOnDue(),
 			task.isRequired(),
 			task.getSortOrder(),
 			toUserSummary(task.getCreatedBy()),
 			task.getCreatedAt()
 		);
+	}
+
+	private List<CourseHomeworkItemResponse> toHomeworkItems(AuthenticatedUser currentUser, List<CourseLearningTask> tasks) {
+		if (tasks.isEmpty()) {
+			return List.of();
+		}
+		List<UUID> taskIds = tasks.stream().map(CourseLearningTask::getId).toList();
+		Map<UUID, CourseLearningTaskSubmission> latestByTaskId = submissionRepository.findLatestByUserIdAndTaskIds(currentUser.id(), taskIds).stream()
+			.collect(java.util.stream.Collectors.toMap(item -> item.getTask().getId(), item -> item));
+
+		Map<UUID, Long> totalStudentsByCourse = new HashMap<>();
+		for (CourseLearningTask task : tasks) {
+			UUID courseId = task.getKnowledgePoint().getUnit().getCourse().getId();
+			totalStudentsByCourse.computeIfAbsent(courseId, key -> (long) courseMemberRepository.findStudentIdsByCourseId(key).size());
+		}
+
+		LocalDateTime now = LocalDateTime.now();
+		List<CourseHomeworkItemResponse> items = new ArrayList<>();
+		for (CourseLearningTask task : tasks) {
+			CourseLearningTaskSubmission submission = latestByTaskId.get(task.getId());
+			String status = resolveHomeworkStatus(task, submission, now);
+			Long remainingSeconds = task.getDueAt() == null ? null : Duration.between(now, task.getDueAt()).getSeconds();
+			if (remainingSeconds != null && remainingSeconds < 0) {
+				remainingSeconds = 0L;
+			}
+			UUID courseId = task.getKnowledgePoint().getUnit().getCourse().getId();
+			items.add(new CourseHomeworkItemResponse(
+				task.getId(),
+				courseId,
+				task.getKnowledgePoint().getUnit().getCourse().getTitle(),
+				task.getTitle(),
+				task.getStartAt(),
+				task.getDueAt(),
+				status,
+				submission == null ? null : submission.getId(),
+				submission == null ? null : submission.getSubmittedAt(),
+				submission == null ? null : submission.getScore(),
+				submissionRepository.countLatestByTaskId(task.getId()),
+				totalStudentsByCourse.getOrDefault(courseId, 0L),
+				remainingSeconds
+			));
+		}
+		return items;
+	}
+
+	private String resolveHomeworkStatus(CourseLearningTask task, CourseLearningTaskSubmission submission, LocalDateTime now) {
+		if (submission != null) {
+			return "SUBMITTED";
+		}
+		if (task.getStartAt() != null && now.isBefore(task.getStartAt())) {
+			return "NOT_STARTED";
+		}
+		if (task.getDueAt() != null && now.isAfter(task.getDueAt())) {
+			return "OVERDUE";
+		}
+		return "IN_PROGRESS";
 	}
 
 	private CourseLearningTaskSubmissionResponse toSubmissionResponse(CourseLearningTaskSubmission submission) {
@@ -535,12 +682,24 @@ public class CourseLearningService {
 	}
 
 	private void validateTaskPayload(LearningTaskType taskType,
+		LearningTaskKind taskKind,
 		LearningMaterialType materialType,
 		LearningQuestionType questionType,
 		MultipartFile file,
 		String mediaUrl,
 		String contentText,
-		String optionsJson) {
+		String optionsJson,
+		LocalDateTime startAt,
+		LocalDateTime dueAt) {
+		if (taskKind == LearningTaskKind.HOMEWORK) {
+			if (startAt == null || dueAt == null) {
+				throw new BadRequestException("作业任务必须设置开始和截止时间");
+			}
+			if (startAt.isAfter(dueAt)) {
+				throw new BadRequestException("作业开始时间不能晚于截止时间");
+			}
+		}
+
 		if (taskType == LearningTaskType.MEDIA) {
 			if (materialType == null) {
 				throw new BadRequestException("媒体学习任务必须指定 materialType");

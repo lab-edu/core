@@ -20,4 +20,10 @@ public interface CourseLearningTaskSubmissionRepository extends JpaRepository<Co
 
 	@Query("select s from CourseLearningTaskSubmission s join fetch s.task t join fetch t.knowledgePoint p join fetch p.unit u join fetch s.submittedBy left join fetch s.gradedBy where s.task.id = :taskId order by s.submittedAt desc")
 	List<CourseLearningTaskSubmission> findTaskSubmissionsWithUsers(@Param("taskId") UUID taskId);
+
+	@Query("select s from CourseLearningTaskSubmission s join fetch s.task t where s.submittedBy.id = :userId and s.latest = true and s.task.id in :taskIds")
+	List<CourseLearningTaskSubmission> findLatestByUserIdAndTaskIds(@Param("userId") UUID userId, @Param("taskIds") List<UUID> taskIds);
+
+	@Query("select count(s) from CourseLearningTaskSubmission s where s.task.id = :taskId and s.latest = true")
+	long countLatestByTaskId(@Param("taskId") UUID taskId);
 }

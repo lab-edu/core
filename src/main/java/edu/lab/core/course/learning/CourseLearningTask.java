@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -37,6 +38,10 @@ public class CourseLearningTask extends AuditableEntity {
 	@Enumerated(EnumType.STRING)
 	@Column(name = "task_type", nullable = false, length = 20)
 	private LearningTaskType taskType;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "task_kind", nullable = false, length = 20)
+	private LearningTaskKind taskKind;
 
 	@Enumerated(EnumType.STRING)
 	@Column(name = "material_type", length = 20)
@@ -69,6 +74,21 @@ public class CourseLearningTask extends AuditableEntity {
 
 	@Column(name = "max_score", nullable = false, precision = 10, scale = 2)
 	private BigDecimal maxScore;
+
+	@Column(name = "start_at")
+	private LocalDateTime startAt;
+
+	@Column(name = "due_at")
+	private LocalDateTime dueAt;
+
+	@Column(name = "notify_on_start", nullable = false)
+	private boolean notifyOnStart;
+
+	@Column(name = "notify_before_due_24h", nullable = false)
+	private boolean notifyBeforeDue24h;
+
+	@Column(name = "notify_on_due", nullable = false)
+	private boolean notifyOnDue;
 
 	@Column(nullable = false)
 	private boolean required;

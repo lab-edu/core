@@ -114,7 +114,7 @@ public class FileStorageService {
 		if (name.isBlank()) {
 			return UUID.randomUUID() + ".bin";
 		}
-		return name.replaceAll("[^a-zA-Z0-9._-]", "_");
+		return name.replaceAll("[^\\p{L}\\p{N} ._-]", "_");
 	}
 
 	public record StoredFile(String filePath, String fileName, String contentType) {

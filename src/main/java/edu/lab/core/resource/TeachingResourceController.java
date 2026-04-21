@@ -63,6 +63,20 @@ public class TeachingResourceController {
 			.body(new InputStreamResource(file.inputStream()));
 	}
 
+	@GetMapping("/api/v1/public/resources/{resourceId}/file")
+	@Operation(summary = "公开访问课程文件资源（临时）")
+	public ResponseEntity<InputStreamResource> accessFilePublic(@PathVariable UUID resourceId) {
+		FileStorageService.StoredContent file = teachingResourceService.accessResourceFilePublic(resourceId);
+		MediaType contentType = parseMediaType(file.contentType());
+		ContentDisposition disposition = ContentDisposition.attachment().filename(file.fileName()).build();
+
+		return ResponseEntity.ok()
+			.contentType(contentType)
+			.contentLength(file.size())
+			.header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+			.body(new InputStreamResource(file.inputStream()));
+	}
+
 	private MediaType parseMediaType(String rawType) {
 		if (rawType == null || rawType.isBlank()) {
 			return MediaType.APPLICATION_OCTET_STREAM;

@@ -1,7 +1,6 @@
 package edu.lab.core.user;
 
 public enum UserRole {
-	STUDENT,
-	TEACHER,
+	USER,
 	ADMIN
 }

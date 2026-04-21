@@ -136,11 +136,8 @@ public class SubmissionService {
 	}
 
 	private AppUser requireStudent(UUID userId) {
-		AppUser user = requireUser(userId);
-		if (user.getRole() != UserRole.STUDENT) {
-			throw new ForbiddenException("只有学生可以提交实验");
-		}
-		return user;
+		// 任何认证用户都可以提交实验（权限检查在课程层面）
+		return requireUser(userId);
 	}
 
 	private StudentGradeOverviewResponse toStudentOverview(AppUser student, List<Submission> latestSubmissions, Map<UUID, String> experimentTitles) {

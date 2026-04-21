@@ -96,12 +96,18 @@ public class CourseLearningService {
 			}
 		}
 
-		List<AppUser> students = currentUser.role() == UserRole.STUDENT
-			? List.of(requireCurrentUser(currentUser.id()))
-			: courseMemberRepository.findMembers(courseId).stream()
+		List<AppUser> students;
+		boolean isTeacherInCourse = courseService.isTeacherOfCourse(currentUser.id(), courseId);
+		if (isTeacherInCourse) {
+			// 教师或管理员查看所有学生
+			students = courseMemberRepository.findMembers(courseId).stream()
 				.filter(member -> member.getMemberRole() == CourseMemberRole.STUDENT)
 				.map(member -> member.getUser())
 				.toList();
+		} else {
+			// 学生只查看自己
+			students = List.of(requireCurrentUser(currentUser.id()));
+		}
 
 		List<StudentLearningOverviewResponse> items = students.stream()
 			.map(student -> toStudentOverview(student, latestSubmissionsByStudentId.get(student.getId()), units, allTasks))
@@ -317,9 +323,11 @@ public class CourseLearningService {
 	public List<CourseHomeworkItemResponse> listMyHomeworksAcrossCourses(AuthenticatedUser currentUser) {
 		AppUser user = requireUser(currentUser.id());
 		List<UUID> courseIds;
-		if (user.getRole() == UserRole.TEACHER || user.getRole() == UserRole.ADMIN) {
+		if (user.getRole() == UserRole.ADMIN || !courseRepository.findOwnedCourses(user.getId()).isEmpty()) {
+			// ADMIN 或拥有至少一门课程的用户查看他们拥有的课程
 			courseIds = courseRepository.findOwnedCourses(user.getId()).stream().map(Course::getId).toList();
 		} else {
+			// 其他用户查看他们作为成员加入的课程
 			courseIds = courseMemberRepository.findCourseIdsByUserId(user.getId());
 		}
 		if (courseIds.isEmpty()) {
@@ -665,11 +673,8 @@ public class CourseLearningService {
 	}
 
 	private AppUser requireStudent(UUID userId) {
-		AppUser user = requireUser(userId);
-		if (user.getRole() != UserRole.STUDENT) {
-			throw new ForbiddenException("只有学生可以提交答卷");
-		}
-		return user;
+		// 任何认证用户都可以提交作业（权限检查在课程层面）
+		return requireUser(userId);
 	}
 
 	private String normalizeTitle(String value, String message) {

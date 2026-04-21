@@ -31,10 +31,7 @@ public class UserService {
 			throw new ConflictException("邮箱已存在");
 		}
 
-		UserRole role = request.role() == null ? UserRole.STUDENT : request.role();
-		if (role == UserRole.ADMIN) {
-			throw new BadRequestException("注册时不允许创建管理员账号");
-		}
+		UserRole role = UserRole.USER;
 
 		AppUser user = new AppUser();
 		user.setUsername(username);

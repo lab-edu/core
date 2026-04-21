@@ -10,6 +10,7 @@ import edu.lab.core.course.CourseMemberRepository;
 import edu.lab.core.course.CourseMemberRole;
 import edu.lab.core.course.CourseRepository;
 import edu.lab.core.course.learning.dto.AssignmentCreateRequest;
+import edu.lab.core.course.learning.dto.AssignmentAiGradeDraftResponse;
 import edu.lab.core.course.learning.dto.AssignmentGradeRequest;
 import edu.lab.core.course.learning.dto.AssignmentResponse;
 import edu.lab.core.course.learning.dto.AssignmentSubmissionRequest;
@@ -45,6 +46,7 @@ public class AssignmentService {
     private final UserRepository userRepository;
     private final CourseMemberRepository courseMemberRepository;
     private final ObjectMapper objectMapper;
+    private final AssignmentAiGradingClient assignmentAiGradingClient;
 
     @Transactional
     public AssignmentResponse createAssignment(UUID courseId, AssignmentCreateRequest request, AuthenticatedUser authUser) {
@@ -323,6 +325,95 @@ public class AssignmentService {
     }
 
     @Transactional(readOnly = true)
+    public AssignmentAiGradeDraftResponse generateAiGradeDraft(UUID courseId, UUID assignmentId, UUID submissionId,
+            AuthenticatedUser authUser) {
+        AssignmentSubmission submission = assignmentSubmissionRepository.findWithRelationsById(submissionId)
+                .orElseThrow(() -> new NotFoundException("Submission not found"));
+
+        Assignment assignment = submission.getAssignment();
+        if (!assignment.getCourse().getId().equals(courseId)) {
+            throw new BadRequestException("Submission does not belong to this course");
+        }
+        if (!assignment.getId().equals(assignmentId)) {
+            throw new BadRequestException("Submission does not belong to this assignment");
+        }
+
+        AppUser user = requireUser(authUser.id());
+        if (!isTeacher(assignment.getCourse(), user)) {
+            throw new ForbiddenException("Only course teachers can generate AI grading draft");
+        }
+
+        List<AssignmentTaskItem> taskItems = assignmentTaskItemRepository
+                .findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(assignmentId);
+        Map<UUID, String> answers = convertJsonToAnswers(submission.getAnswersJson());
+
+        List<AssignmentAiGradingClient.TaskItemContext> taskItemContexts = taskItems.stream()
+                .map(taskItem -> new AssignmentAiGradingClient.TaskItemContext(
+                        taskItem.getId(),
+                        taskItem.getSortOrder(),
+                        taskItem.getQuestionType().name(),
+                        taskItem.getQuestion(),
+                        convertJsonToOptions(taskItem.getOptionsJson()),
+                        taskItem.getReferenceAnswer(),
+                        taskItem.getMaxScore(),
+                        answers.getOrDefault(taskItem.getId(), "")
+                ))
+                .toList();
+
+        AssignmentAiGradingClient.AiGradeContext context = new AssignmentAiGradingClient.AiGradeContext(
+                courseId,
+                assignmentId,
+                assignment.getTitle(),
+                assignment.getDescription(),
+                assignment.getTotalScore(),
+                assignment.getStartAt(),
+                assignment.getDueAt(),
+                new AssignmentAiGradingClient.StudentInfo(
+                        submission.getSubmittedBy().getId(),
+                        submission.getSubmittedBy().getUsername(),
+                        submission.getSubmittedBy().getDisplayName()
+                ),
+                taskItemContexts
+        );
+
+        AssignmentAiGradingClient.AiGradeRawResult aiResult = assignmentAiGradingClient.generateGradeDraft(context);
+        Map<UUID, AssignmentAiGradingClient.AiGradeRawItem> itemMap = new HashMap<>();
+        if (aiResult.itemGrades() != null) {
+            for (AssignmentAiGradingClient.AiGradeRawItem item : aiResult.itemGrades()) {
+                if (item == null || item.taskItemId() == null) {
+                    continue;
+                }
+                try {
+                    itemMap.put(UUID.fromString(item.taskItemId()), item);
+                } catch (IllegalArgumentException ignore) {
+                    // Ignore invalid task item ids returned by model.
+                }
+            }
+        }
+
+        BigDecimal summedScore = BigDecimal.ZERO;
+        List<AssignmentAiGradeDraftResponse.AssignmentAiItemGradeResponse> itemGrades = new ArrayList<>();
+        for (AssignmentTaskItem taskItem : taskItems) {
+            AssignmentAiGradingClient.AiGradeRawItem rawItem = itemMap.get(taskItem.getId());
+            BigDecimal rawScore = rawItem == null || rawItem.score() == null ? BigDecimal.ZERO : rawItem.score();
+            BigDecimal clampedScore = clampScore(rawScore, taskItem.getMaxScore());
+            String itemFeedback = rawItem == null ? null : normalizeNullableText(rawItem.feedback());
+            summedScore = summedScore.add(clampedScore);
+            itemGrades.add(new AssignmentAiGradeDraftResponse.AssignmentAiItemGradeResponse(
+                    taskItem.getId(),
+                    clampedScore,
+                    itemFeedback
+            ));
+        }
+
+        BigDecimal totalScore = aiResult.totalScore() == null ? summedScore : aiResult.totalScore();
+        totalScore = clampScore(totalScore, assignment.getTotalScore());
+        String feedback = normalizeNullableText(aiResult.feedback());
+
+        return new AssignmentAiGradeDraftResponse(totalScore, feedback, itemGrades);
+    }
+
+    @Transactional(readOnly = true)
     public List<AssignmentSubmissionResponse> listSubmissions(UUID courseId, UUID assignmentId, AuthenticatedUser authUser) {
         Assignment assignment = assignmentRepository.findWithCourseById(assignmentId)
                 .orElseThrow(() -> new NotFoundException("Assignment not found"));
@@ -489,6 +580,17 @@ public class AssignmentService {
         }
         String normalized = text.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private BigDecimal clampScore(BigDecimal score, BigDecimal maxScore) {
+        BigDecimal normalized = score == null ? BigDecimal.ZERO : score;
+        if (normalized.compareTo(BigDecimal.ZERO) < 0) {
+            normalized = BigDecimal.ZERO;
+        }
+        if (maxScore != null && normalized.compareTo(maxScore) > 0) {
+            normalized = maxScore;
+        }
+        return normalized;
     }
 
     private String convertOptionsToJson(LearningQuestionType questionType, List<String> options) {

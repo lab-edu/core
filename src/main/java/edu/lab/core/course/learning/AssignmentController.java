@@ -1,6 +1,7 @@
 package edu.lab.core.course.learning;
 
 import edu.lab.core.course.learning.dto.AssignmentCreateRequest;
+import edu.lab.core.course.learning.dto.AssignmentAiGradeDraftResponse;
 import edu.lab.core.course.learning.dto.AssignmentResponse;
 import edu.lab.core.course.learning.dto.AssignmentSubmissionRequest;
 import edu.lab.core.course.learning.dto.AssignmentSubmissionResponse;
@@ -128,5 +129,16 @@ public class AssignmentController {
             @Valid @RequestBody AssignmentGradeRequest request,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
         return ResponseEntity.ok(ApiResponse.ok(assignmentService.gradeSubmission(courseId, submissionId, request, authUser)));
+    }
+
+    @PostMapping("/{assignmentId}/submissions/{submissionId}/ai-grade-draft")
+    public ResponseEntity<ApiResponse<AssignmentAiGradeDraftResponse>> generateAiGradeDraft(
+            @PathVariable UUID courseId,
+            @PathVariable UUID assignmentId,
+            @PathVariable UUID submissionId,
+            @AuthenticationPrincipal AuthenticatedUser authUser) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                assignmentService.generateAiGradeDraft(courseId, assignmentId, submissionId, authUser)
+        ));
     }
 }

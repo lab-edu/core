@@ -23,7 +23,6 @@ public class CourseWorkspaceService {
 		CourseWorkspaceModuleKey.OVERVIEW,
 		CourseWorkspaceModuleKey.LEARNING,
 		CourseWorkspaceModuleKey.HOMEWORK,
-		CourseWorkspaceModuleKey.QUIZ,
 		CourseWorkspaceModuleKey.GRADES,
 		CourseWorkspaceModuleKey.ANNOUNCEMENT,
 		CourseWorkspaceModuleKey.INTERACTION

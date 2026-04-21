@@ -84,7 +84,7 @@ alter table course_learning_tasks
     add constraint chk_course_learning_tasks_title_not_blank check (char_length(trim(title)) > 0);
 
 alter table course_learning_tasks
-    add constraint chk_course_learning_tasks_type_valid check (task_type in ('MEDIA', 'QUIZ'));
+    add constraint chk_course_learning_tasks_type_valid check (task_type in ('MEDIA'));
 
 alter table course_learning_tasks
     add constraint chk_course_learning_tasks_material_type_valid check (material_type is null or material_type in ('FILE', 'LINK', 'TEXT'));

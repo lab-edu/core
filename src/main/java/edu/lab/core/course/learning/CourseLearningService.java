@@ -235,7 +235,7 @@ public class CourseLearningService {
 		MultipartFile file) {
 		CourseLearningPoint point = requirePointInCourse(currentUser.id(), courseId, pointId, true);
 		AppUser creator = requireUser(currentUser.id());
-		LearningTaskType effectiveTaskType = taskType != null ? taskType : (questionType != null ? LearningTaskType.QUIZ : LearningTaskType.MEDIA);
+		LearningTaskType effectiveTaskType = taskType != null ? taskType : LearningTaskType.MEDIA;
 		LearningTaskKind effectiveTaskKind = taskKind == null ? LearningTaskKind.LEARNING : taskKind;
 		CourseLearningTask task = new CourseLearningTask();
 		task.setKnowledgePoint(point);
@@ -711,18 +711,8 @@ public class CourseLearningService {
 	}
 
 	private String writeOptions(LearningTaskType taskType, LearningQuestionType questionType, String optionsText) {
-		if (taskType != LearningTaskType.QUIZ) {
-			return null;
-		}
-		List<String> options = parseOptions(optionsText);
-		if (options.isEmpty() && questionType != LearningQuestionType.SHORT_ANSWER) {
-			return null;
-		}
-		try {
-			return objectMapper.writeValueAsString(options);
-		} catch (JsonProcessingException exception) {
-			throw new IllegalStateException("选项写入失败", exception);
-		}
+		// 不再支持QUIZ类型，选项字段不再使用
+		return null;
 	}
 
 	private List<String> readOptions(String optionsJson) {
@@ -784,11 +774,5 @@ public class CourseLearningService {
 			return;
 		}
 
-		if (questionType == null) {
-			throw new BadRequestException("随堂测试任务必须指定题型");
-		}
-		if ((questionType == LearningQuestionType.SINGLE_CHOICE || questionType == LearningQuestionType.MULTIPLE_CHOICE) && (optionsJson == null || optionsJson.isBlank())) {
-			throw new BadRequestException("选择题必须提供选项");
-		}
 	}
 }

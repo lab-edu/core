@@ -5,7 +5,6 @@ public enum CourseWorkspaceModuleKey {
 	OVERVIEW,
 	LEARNING,
 	HOMEWORK,
-	QUIZ,
 	INTERACTION,
 	GRADES,
 	ANNOUNCEMENT

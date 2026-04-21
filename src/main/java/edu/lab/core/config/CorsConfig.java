@@ -14,7 +14,7 @@ public class CorsConfig implements WebMvcConfigurer {
 
 	@Override
 	public void addCorsMappings(CorsRegistry registry) {
-		String allowedOrigins = environment.getProperty("lab.cors.allowed-origins", "http://localhost:3000");
+		String allowedOrigins = environment.getProperty("lab.cors.allowed-origins", "http://localhost:3000,http://127.0.0.1:3000");
 		registry.addMapping("/api/**")
 			.allowedOrigins(allowedOrigins.split(","))
 			.allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")

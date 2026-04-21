@@ -18,9 +18,12 @@ import edu.lab.core.user.UserRepository;
 import edu.lab.core.user.dto.UserSummaryResponse;
 import edu.lab.core.course.workspace.CourseWorkspaceService;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -41,7 +44,7 @@ public class CourseService {
 
 	@Transactional
 	public CourseSummaryResponse createCourse(AuthenticatedUser currentUser, CourseCreateRequest request) {
-		AppUser user = requireTeacher(currentUser.id());
+		AppUser user = requireAnyUser(currentUser.id());
 		Course course = new Course();
 		course.setTitle(request.title().trim());
 		course.setDescription(request.description());
@@ -62,15 +65,27 @@ public class CourseService {
 	@Transactional(readOnly = true)
 	public List<CourseSummaryResponse> listCourses(AuthenticatedUser currentUser) {
 		AppUser user = requireUser(currentUser.id());
-		if (user.getRole() == UserRole.TEACHER || user.getRole() == UserRole.ADMIN) {
-			return courseRepository.findOwnedCourses(user.getId()).stream()
-				.map(course -> toSummary(course, courseMemberRepository.findMembers(course.getId()).size()))
-				.toList();
+		// 获取用户拥有的课程（作为所有者）
+		List<Course> ownedCourses = courseRepository.findOwnedCourses(user.getId());
+		// 获取用户作为 STUDENT 成员加入的课程
+		List<Course> studentCourses = courseMemberRepository.findCoursesByMemberRole(user.getId(), CourseMemberRole.STUDENT);
+
+		// 合并去重（按ID）
+		Set<UUID> seenIds = new HashSet<>();
+		List<CourseSummaryResponse> result = new ArrayList<>();
+
+		for (Course course : ownedCourses) {
+			if (seenIds.add(course.getId())) {
+				result.add(toSummary(course, courseMemberRepository.findMembers(course.getId()).size()));
+			}
+		}
+		for (Course course : studentCourses) {
+			if (seenIds.add(course.getId())) {
+				result.add(toSummary(course, courseMemberRepository.findMembers(course.getId()).size()));
+			}
 		}
 
-		return courseMemberRepository.findCoursesByMemberRole(user.getId(), CourseMemberRole.STUDENT).stream()
-			.map(course -> toSummary(course, courseMemberRepository.findMembers(course.getId()).size()))
-			.toList();
+		return result;
 	}
 
 	@Transactional(readOnly = true)
@@ -130,7 +145,10 @@ public class CourseService {
 	public Course requireOwnedCourse(UUID userId, UUID courseId) {
 		Course course = courseRepository.findById(courseId)
 			.orElseThrow(() -> new NotFoundException("课程不存在"));
-		if (!course.getOwner().getId().equals(userId)) {
+		AppUser user = userRepository.findById(userId)
+			.orElseThrow(() -> new NotFoundException("当前用户不存在"));
+		// ADMIN 用户可以管理任何课程
+		if (user.getRole() != UserRole.ADMIN && !course.getOwner().getId().equals(userId)) {
 			throw new ForbiddenException("只有课程创建者可以执行该操作");
 		}
 		return course;
@@ -140,7 +158,10 @@ public class CourseService {
 	public Course requireAccessibleCourse(UUID userId, UUID courseId) {
 		Course course = courseRepository.findById(courseId)
 			.orElseThrow(() -> new NotFoundException("课程不存在"));
-		if (!course.getOwner().getId().equals(userId) && !courseMemberRepository.existsByCourseIdAndUserId(courseId, userId)) {
+		AppUser user = userRepository.findById(userId)
+			.orElseThrow(() -> new NotFoundException("当前用户不存在"));
+		// ADMIN 用户可以访问任何课程
+		if (user.getRole() != UserRole.ADMIN && !course.getOwner().getId().equals(userId) && !courseMemberRepository.existsByCourseIdAndUserId(courseId, userId)) {
 			throw new ForbiddenException("你不是该课程成员");
 		}
 		return course;
@@ -150,7 +171,10 @@ public class CourseService {
 	public Course requireTeachingCourse(UUID userId, UUID courseId) {
 		Course course = courseRepository.findById(courseId)
 			.orElseThrow(() -> new NotFoundException("课程不存在"));
-		if (!course.getOwner().getId().equals(userId)) {
+		AppUser user = userRepository.findById(userId)
+			.orElseThrow(() -> new NotFoundException("当前用户不存在"));
+		// ADMIN 用户可以管理任何课程
+		if (user.getRole() != UserRole.ADMIN && !course.getOwner().getId().equals(userId)) {
 			throw new ForbiddenException("只有课程创建者可以执行该操作");
 		}
 		return course;
@@ -159,7 +183,14 @@ public class CourseService {
 	@Transactional(readOnly = true)
 	public boolean isTeacherOfCourse(UUID userId, UUID courseId) {
 		return courseRepository.findById(courseId)
-			.map(course -> course.getOwner().getId().equals(userId))
+			.map(course -> {
+				// ADMIN 用户被视为任何课程的教师
+				AppUser user = userRepository.findById(userId).orElse(null);
+				if (user != null && user.getRole() == UserRole.ADMIN) {
+					return true;
+				}
+				return course.getOwner().getId().equals(userId);
+			})
 			.orElse(false);
 	}
 
@@ -168,20 +199,14 @@ public class CourseService {
 			.orElseThrow(() -> new NotFoundException("当前用户不存在"));
 	}
 
-	private AppUser requireTeacher(UUID userId) {
-		AppUser user = requireUser(userId);
-		if (user.getRole() != UserRole.TEACHER && user.getRole() != UserRole.ADMIN) {
-			throw new ForbiddenException("只有教师可以执行该操作");
-		}
-		return user;
+	private AppUser requireAnyUser(UUID userId) {
+		// 任何认证用户都可以执行操作（USER 或 ADMIN）
+		return requireUser(userId);
 	}
 
 	private AppUser requireStudent(UUID userId) {
-		AppUser user = requireUser(userId);
-		if (user.getRole() != UserRole.STUDENT) {
-			throw new ForbiddenException("只有学生可以加入课程");
-		}
-		return user;
+		// 任何认证用户都可以加入课程（USER 或 ADMIN）
+		return requireUser(userId);
 	}
 
 	private String generateUniqueInviteCode() {

@@ -55,7 +55,7 @@ class TeachingFlowIntegrationTest {
 
 	@Test
 	void teacherStudentCourseExperimentAndSubmissionFlowWorks() throws Exception {
-		registerUser("teacher1", "teacher1@example.com", "Password123!", "教师一号", "TEACHER");
+		registerUser("teacher1", "teacher1@example.com", "Password123!", "教师一号");
 		var teacherCookie = login("teacher1", "Password123!");
 
 		MvcResult createCourseResult = mockMvc.perform(post("/api/v1/courses")
@@ -72,7 +72,7 @@ class TeachingFlowIntegrationTest {
 		UUID courseId = UUID.fromString(courseNode.path("id").asText());
 		String inviteCode = courseNode.path("inviteCode").asText();
 
-		registerUser("student1", "student1@example.com", "Password123!", "学生一号", "STUDENT");
+		registerUser("student1", "student1@example.com", "Password123!", "学生一号");
 		var studentCookie = login("student1", "Password123!");
 
 		mockMvc.perform(post("/api/v1/courses/join")
@@ -205,7 +205,7 @@ class TeachingFlowIntegrationTest {
 
 	@Test
 	void courseLearningStructureSubmissionAndGradingFlowWorks() throws Exception {
-		registerUser("teacher2", "teacher2@example.com", "Password123!", "教师二号", "TEACHER");
+		registerUser("teacher2", "teacher2@example.com", "Password123!", "教师二号");
 		var teacherCookie = login("teacher2", "Password123!");
 
 		MvcResult createCourseResult = mockMvc.perform(post("/api/v1/courses")
@@ -221,7 +221,7 @@ class TeachingFlowIntegrationTest {
 		JsonNode courseNode = objectMapper.readTree(createCourseResult.getResponse().getContentAsString()).path("data").path("course");
 		UUID courseId = UUID.fromString(courseNode.path("id").asText());
 
-		registerUser("student2", "student2@example.com", "Password123!", "学生二号", "STUDENT");
+		registerUser("student2", "student2@example.com", "Password123!", "学生二号");
 		var studentCookie = login("student2", "Password123!");
 
 		mockMvc.perform(post("/api/v1/courses/join")
@@ -325,12 +325,12 @@ class TeachingFlowIntegrationTest {
 			.andExpect(status().isBadRequest());
 	}
 
-	private void registerUser(String username, String email, String password, String displayName, String role) throws Exception {
+	private void registerUser(String username, String email, String password, String displayName) throws Exception {
 		mockMvc.perform(post("/api/v1/auth/register")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
-					{"username":"%s","email":"%s","password":"%s","displayName":"%s","role":"%s"}
-					""".formatted(username, email, password, displayName, role)))
+					{"username":"%s","email":"%s","password":"%s","displayName":"%s"}
+					""".formatted(username, email, password, displayName)))
 			.andExpect(status().isCreated());
 	}
 

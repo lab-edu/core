@@ -9,7 +9,6 @@ public record AuthRegisterRequest(
 	@NotBlank @Size(min = 3, max = 64) String username,
 	@NotBlank @Email String email,
 	@NotBlank @Size(min = 8, max = 72) String password,
-	String displayName,
-	UserRole role
+	String displayName
 ) {
 }

@@ -91,6 +91,17 @@ public class TeachingResourceService {
 		return fileStorageService.openFile(resource.getFilePath(), resource.getFileName(), resource.getContentType());
 	}
 
+	@Transactional(readOnly = true)
+	public FileStorageService.StoredContent accessResourceFilePublic(UUID resourceId) {
+		TeachingResource resource = teachingResourceRepository.findById(resourceId)
+			.orElseThrow(() -> new NotFoundException("资源不存在"));
+		// 公开访问，跳过课程权限检查
+		if (resource.getType() != ResourceType.FILE || resource.getFilePath() == null) {
+			throw new BadRequestException("当前资源不是文件类型，无法下载");
+		}
+		return fileStorageService.openFile(resource.getFilePath(), resource.getFileName(), resource.getContentType());
+	}
+
 	private AppUser requireUser(UUID userId) {
 		return userRepository.findById(userId)
 			.orElseThrow(() -> new NotFoundException("当前用户不存在"));

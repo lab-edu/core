@@ -30,6 +30,9 @@ public class AssignmentSubmission extends AuditableEntity {
     @Column(name = "answers_json", columnDefinition = "text")
     private String answersJson;
 
+    @Column(name = "item_grades_json", columnDefinition = "text")
+    private String itemGradesJson;
+
     @Column(name = "total_score", precision = 10, scale = 2)
     private BigDecimal totalScore;
 

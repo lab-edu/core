@@ -6,12 +6,15 @@ import edu.lab.core.course.learning.dto.AssignmentSubmissionRequest;
 import edu.lab.core.course.learning.dto.AssignmentSubmissionResponse;
 import edu.lab.core.course.learning.dto.AssignmentUpdateRequest;
 import edu.lab.core.course.learning.dto.AssignmentGradeRequest;
+import edu.lab.core.common.api.ApiResponse;
 import edu.lab.core.security.AuthenticatedUser;
+import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -22,45 +25,58 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.validation.annotation.Validated;
 
 @RestController
 @RequestMapping("/api/v1/courses/{courseId}/assignments")
 @RequiredArgsConstructor
+@Validated
 public class AssignmentController {
 
     private final AssignmentService assignmentService;
+    private static final Logger logger = LoggerFactory.getLogger(AssignmentController.class);
 
     @GetMapping
-    public List<AssignmentResponse> listAssignments(
+    public ResponseEntity<ApiResponse<List<AssignmentResponse>>> listAssignments(
             @PathVariable UUID courseId,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.listAssignments(courseId, authUser);
+        return ResponseEntity.ok(ApiResponse.ok(assignmentService.listAssignments(courseId, authUser)));
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public AssignmentResponse createAssignment(
+    public ResponseEntity<ApiResponse<AssignmentResponse>> createAssignment(
             @PathVariable UUID courseId,
-            @RequestBody AssignmentCreateRequest request,
+            @Valid @RequestBody AssignmentCreateRequest request,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.createAssignment(courseId, request, authUser);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(
+                assignmentService.createAssignment(courseId, request, authUser)
+        ));
     }
 
     @GetMapping("/{assignmentId}")
-    public AssignmentResponse getAssignment(
+    public ResponseEntity<ApiResponse<AssignmentResponse>> getAssignment(
             @PathVariable UUID courseId,
             @PathVariable UUID assignmentId,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.getAssignment(courseId, assignmentId, authUser);
+        AssignmentResponse resp = assignmentService.getAssignment(courseId, assignmentId, authUser);
+        try {
+            logger.debug("getAssignment: courseId={}, assignmentId={}, title={}, taskItems={}",
+                    courseId, assignmentId, resp.title(), resp.taskItems() == null ? 0 : resp.taskItems().size());
+        } catch (Exception e) {
+            // ignore logging errors
+        }
+        return ResponseEntity.ok(ApiResponse.ok(resp));
     }
 
     @PutMapping("/{assignmentId}")
-    public AssignmentResponse updateAssignment(
+    public ResponseEntity<ApiResponse<AssignmentResponse>> updateAssignment(
             @PathVariable UUID courseId,
             @PathVariable UUID assignmentId,
-            @RequestBody AssignmentUpdateRequest request,
+            @Valid @RequestBody AssignmentUpdateRequest request,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.updateAssignment(courseId, assignmentId, request, authUser);
+        return ResponseEntity.ok(ApiResponse.ok(assignmentService.updateAssignment(courseId, assignmentId, request, authUser)));
     }
 
     @DeleteMapping("/{assignmentId}")
@@ -73,42 +89,44 @@ public class AssignmentController {
     }
 
     @PostMapping("/{assignmentId}/submissions")
-    @ResponseStatus(HttpStatus.CREATED)
-    public AssignmentSubmissionResponse submitAssignment(
+    public ResponseEntity<ApiResponse<AssignmentSubmissionResponse>> submitAssignment(
             @PathVariable UUID courseId,
             @PathVariable UUID assignmentId,
-            @RequestBody AssignmentSubmissionRequest request,
+            @Valid @RequestBody AssignmentSubmissionRequest request,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.submitAssignment(courseId, assignmentId, request, authUser);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(
+                assignmentService.submitAssignment(courseId, assignmentId, request, authUser)
+        ));
     }
 
     @GetMapping("/{assignmentId}/submissions")
-    public List<AssignmentSubmissionResponse> listSubmissions(
+    public ResponseEntity<ApiResponse<List<AssignmentSubmissionResponse>>> listSubmissions(
             @PathVariable UUID courseId,
             @PathVariable UUID assignmentId,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.listSubmissions(courseId, assignmentId, authUser);
+        return ResponseEntity.ok(ApiResponse.ok(assignmentService.listSubmissions(courseId, assignmentId, authUser)));
     }
 
-    @GetMapping("/{assignmentId}/submissions/latest")
-    public AssignmentSubmissionResponse getLatestSubmission(
+        @GetMapping("/{assignmentId}/submissions/latest")
+        public ResponseEntity<ApiResponse<AssignmentSubmissionResponse>> getLatestSubmission(
             @PathVariable UUID courseId,
             @PathVariable UUID assignmentId,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
         // 简化为获取用户的最新提交
         List<AssignmentSubmissionResponse> submissions = assignmentService.listSubmissions(courseId, assignmentId, authUser);
-        return submissions.stream()
-                .filter(AssignmentSubmissionResponse::latest)
-                .findFirst()
-                .orElse(null);
-    }
+        AssignmentSubmissionResponse latest = submissions.stream()
+            .filter(AssignmentSubmissionResponse::latest)
+            .findFirst()
+            .orElse(null);
+        return ResponseEntity.ok(ApiResponse.ok(latest));
+        }
 
     @PatchMapping("/submissions/{submissionId}/grade")
-    public AssignmentSubmissionResponse gradeSubmission(
+    public ResponseEntity<ApiResponse<AssignmentSubmissionResponse>> gradeSubmission(
             @PathVariable UUID courseId,
             @PathVariable UUID submissionId,
-            @RequestBody AssignmentGradeRequest request,
+            @Valid @RequestBody AssignmentGradeRequest request,
             @AuthenticationPrincipal AuthenticatedUser authUser) {
-        return assignmentService.gradeSubmission(courseId, submissionId, request, authUser);
+        return ResponseEntity.ok(ApiResponse.ok(assignmentService.gradeSubmission(courseId, submissionId, request, authUser)));
     }
 }

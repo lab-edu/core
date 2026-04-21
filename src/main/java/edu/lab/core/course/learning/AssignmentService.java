@@ -1,33 +1,35 @@
 package edu.lab.core.course.learning;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.lab.core.common.exception.BadRequestException;
 import edu.lab.core.common.exception.ForbiddenException;
 import edu.lab.core.common.exception.NotFoundException;
 import edu.lab.core.course.Course;
-import edu.lab.core.course.CourseRepository;
 import edu.lab.core.course.CourseMemberRepository;
 import edu.lab.core.course.CourseMemberRole;
+import edu.lab.core.course.CourseRepository;
 import edu.lab.core.course.learning.dto.AssignmentCreateRequest;
+import edu.lab.core.course.learning.dto.AssignmentGradeRequest;
 import edu.lab.core.course.learning.dto.AssignmentResponse;
 import edu.lab.core.course.learning.dto.AssignmentSubmissionRequest;
 import edu.lab.core.course.learning.dto.AssignmentSubmissionResponse;
 import edu.lab.core.course.learning.dto.AssignmentUpdateRequest;
-import edu.lab.core.course.learning.dto.AssignmentGradeRequest;
-import edu.lab.core.notification.HomeworkReminderService;
 import edu.lab.core.security.AuthenticatedUser;
-import edu.lab.core.storage.FileStorageService;
 import edu.lab.core.user.AppUser;
 import edu.lab.core.user.UserRepository;
 import edu.lab.core.user.dto.UserSummaryResponse;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,75 +44,39 @@ public class AssignmentService {
     private final CourseRepository courseRepository;
     private final UserRepository userRepository;
     private final CourseMemberRepository courseMemberRepository;
-    private final HomeworkReminderService homeworkReminderService;
     private final ObjectMapper objectMapper;
-    private final FileStorageService fileStorageService;
 
     @Transactional
     public AssignmentResponse createAssignment(UUID courseId, AssignmentCreateRequest request, AuthenticatedUser authUser) {
-        Course course = courseRepository.findById(courseId)
-                .orElseThrow(() -> new NotFoundException("Course not found"));
-
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
-
-        // 验证用户是否是课程教师或管理员
-        if (!courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(course, user,
-                List.of(CourseMemberRole.OWNER, CourseMemberRole.TEACHER))) {
-            throw new ForbiddenException("Only course teachers can create assignments");
-        }
+        AssignmentContext context = requireTeacherContext(courseId, authUser.id());
+        validateTimeWindow(request.startAt(), request.dueAt());
 
         Assignment assignment = new Assignment();
-        assignment.setCourse(course);
-        assignment.setCreatedBy(user);
-        assignment.setTitle(request.title());
-        assignment.setDescription(request.description());
-
-        // 计算总分：如果autoCalculateTotal为true，则汇总题目分值；否则使用提供的总分
-        if (request.autoCalculateTotal()) {
-            BigDecimal total = request.taskItems().stream()
-                    .map(AssignmentCreateRequest.AssignmentTaskItemRequest::maxScore)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            assignment.setTotalScore(total);
-        } else {
-            assignment.setTotalScore(request.totalScore());
-        }
-
+        assignment.setCourse(context.course());
+        assignment.setCreatedBy(context.user());
+        assignment.setTitle(normalizeTitle(request.title()));
+        assignment.setDescription(normalizeNullableText(request.description()));
         assignment.setStartAt(request.startAt());
         assignment.setDueAt(request.dueAt());
-        assignment.setRequired(request.required());
-        assignment.setSortOrder(request.sortOrder());
-        assignment.setPublished(request.published());
-        assignment.setNotifyOnStart(request.notifyOnStart());
-        assignment.setNotifyBeforeDue24h(request.notifyBeforeDue24h());
-        assignment.setNotifyOnDue(request.notifyOnDue());
-        assignment.setAutoCalculateTotal(request.autoCalculateTotal());
+        assignment.setRequired(Boolean.TRUE.equals(request.required()));
+        assignment.setSortOrder(request.sortOrder() == null ? 0 : request.sortOrder());
+        assignment.setPublished(Boolean.TRUE.equals(request.published()));
+        assignment.setNotifyOnStart(Boolean.TRUE.equals(request.notifyOnStart()));
+        assignment.setNotifyBeforeDue24h(Boolean.TRUE.equals(request.notifyBeforeDue24h()));
+        assignment.setNotifyOnDue(Boolean.TRUE.equals(request.notifyOnDue()));
+
+        List<AssignmentTaskItem> taskItems = buildTaskItemsFromCreateRequest(assignment, request.taskItems());
+        boolean autoCalc = request.autoCalculateTotal() == null || request.autoCalculateTotal();
+        assignment.setAutoCalculateTotal(autoCalc);
+        assignment.setTotalScore(resolveTotalScore(autoCalc, request.totalScore(), taskItems));
 
         Assignment savedAssignment = assignmentRepository.save(assignment);
+        List<AssignmentTaskItem> savedTaskItems = assignmentTaskItemRepository.saveAll(taskItems);
 
-        // 创建题目项
-        List<AssignmentResponse.AssignmentTaskItemResponse> taskItemResponses = new ArrayList<>();
-        int itemSortOrder = 0;
-        for (AssignmentCreateRequest.AssignmentTaskItemRequest itemRequest : request.taskItems()) {
-            AssignmentTaskItem taskItem = new AssignmentTaskItem();
-            taskItem.setAssignment(savedAssignment);
-            taskItem.setQuestion(itemRequest.question());
-            taskItem.setQuestionType(itemRequest.questionType());
-            taskItem.setOptionsJson(convertOptionsToJson(itemRequest.options()));
-            taskItem.setReferenceAnswer(itemRequest.referenceAnswer());
-            taskItem.setMaxScore(itemRequest.maxScore());
-            taskItem.setSortOrder(itemSortOrder++);
-
-            AssignmentTaskItem savedItem = assignmentTaskItemRepository.save(taskItem);
-            taskItemResponses.add(convertToTaskItemResponse(savedItem));
-        }
-
-        // 设置提醒
-        if (request.published()) {
-            // homeworkReminderService.scheduleAssignmentReminders(savedAssignment); // TODO: implement
-        }
-
-        return convertToAssignmentResponse(savedAssignment, taskItemResponses);
+        return convertToAssignmentResponse(savedAssignment, savedTaskItems.stream()
+                .sorted(Comparator.comparingInt(AssignmentTaskItem::getSortOrder))
+                .map(this::convertToTaskItemResponse)
+                .toList());
     }
 
     @Transactional
@@ -122,62 +88,44 @@ public class AssignmentService {
             throw new BadRequestException("Assignment does not belong to this course");
         }
 
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
-
-        if (!assignment.getCreatedBy().getId().equals(user.getId()) &&
-            !courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(assignment.getCourse(), user,
-                    List.of(CourseMemberRole.OWNER, CourseMemberRole.TEACHER))) {
+        AppUser user = requireUser(authUser.id());
+        if (!assignment.getCreatedBy().getId().equals(user.getId()) && !isTeacher(assignment.getCourse(), user)) {
             throw new ForbiddenException("Only assignment creator or course teachers can update");
         }
 
-        assignment.setTitle(request.title());
-        assignment.setDescription(request.description());
+        validateTimeWindow(request.startAt(), request.dueAt());
 
-        if (request.autoCalculateTotal()) {
-            // 重新计算总分
-            List<AssignmentTaskItem> existingItems = assignmentTaskItemRepository.findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(assignmentId);
-            BigDecimal total = existingItems.stream()
-                    .map(AssignmentTaskItem::getMaxScore)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            assignment.setTotalScore(total);
-        } else {
-            assignment.setTotalScore(request.totalScore());
-        }
-
+        assignment.setTitle(normalizeTitle(request.title()));
+        assignment.setDescription(normalizeNullableText(request.description()));
         assignment.setStartAt(request.startAt());
         assignment.setDueAt(request.dueAt());
-        assignment.setRequired(request.required());
-        assignment.setSortOrder(request.sortOrder());
-        assignment.setPublished(request.published());
-        assignment.setNotifyOnStart(request.notifyOnStart());
-        assignment.setNotifyBeforeDue24h(request.notifyBeforeDue24h());
-        assignment.setNotifyOnDue(request.notifyOnDue());
-        assignment.setAutoCalculateTotal(request.autoCalculateTotal());
+        assignment.setRequired(request.required() != null ? request.required() : assignment.isRequired());
+        assignment.setSortOrder(request.sortOrder() != null ? request.sortOrder() : assignment.getSortOrder());
+        assignment.setPublished(request.published() != null ? request.published() : assignment.isPublished());
+        assignment.setNotifyOnStart(request.notifyOnStart() != null ? request.notifyOnStart() : assignment.isNotifyOnStart());
+        assignment.setNotifyBeforeDue24h(request.notifyBeforeDue24h() != null ? request.notifyBeforeDue24h() : assignment.isNotifyBeforeDue24h());
+        assignment.setNotifyOnDue(request.notifyOnDue() != null ? request.notifyOnDue() : assignment.isNotifyOnDue());
 
-        // 更新题目项（简化：删除所有现有项，创建新项）
-        assignmentTaskItemRepository.deleteByAssignmentId(assignmentId);
-        List<AssignmentResponse.AssignmentTaskItemResponse> taskItemResponses = new ArrayList<>();
-        int itemSortOrder = 0;
-        for (AssignmentUpdateRequest.AssignmentTaskItemUpdateRequest itemRequest : request.taskItems()) {
-            AssignmentTaskItem taskItem = new AssignmentTaskItem();
-            taskItem.setAssignment(assignment);
-            taskItem.setQuestion(itemRequest.question());
-            taskItem.setQuestionType(itemRequest.questionType());
-            taskItem.setOptionsJson(convertOptionsToJson(itemRequest.options()));
-            taskItem.setReferenceAnswer(itemRequest.referenceAnswer());
-            taskItem.setMaxScore(itemRequest.maxScore());
-            taskItem.setSortOrder(itemSortOrder++);
-
-            AssignmentTaskItem savedItem = assignmentTaskItemRepository.save(taskItem);
-            taskItemResponses.add(convertToTaskItemResponse(savedItem));
+        List<AssignmentTaskItem> taskItems;
+        if (request.taskItems() != null) {
+            assignmentTaskItemRepository.deleteByAssignmentId(assignmentId);
+            taskItems = buildTaskItemsFromUpdateRequest(assignment, request.taskItems());
+            taskItems = assignmentTaskItemRepository.saveAll(taskItems);
+        } else {
+            taskItems = assignmentTaskItemRepository.findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(assignmentId);
         }
 
+        boolean autoCalc = request.autoCalculateTotal() != null
+                ? request.autoCalculateTotal()
+                : assignment.isAutoCalculateTotal();
+        assignment.setAutoCalculateTotal(autoCalc);
+        assignment.setTotalScore(resolveTotalScore(autoCalc, request.totalScore(), taskItems));
+
         Assignment updatedAssignment = assignmentRepository.save(assignment);
-
-        // 更新提醒
-        // homeworkReminderService.updateAssignmentReminders(updatedAssignment); // TODO: implement
-
+        List<AssignmentResponse.AssignmentTaskItemResponse> taskItemResponses = taskItems.stream()
+                .sorted(Comparator.comparingInt(AssignmentTaskItem::getSortOrder))
+                .map(this::convertToTaskItemResponse)
+                .toList();
         return convertToAssignmentResponse(updatedAssignment, taskItemResponses);
     }
 
@@ -190,17 +138,11 @@ public class AssignmentService {
             throw new BadRequestException("Assignment does not belong to this course");
         }
 
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
+        AppUser user = requireUser(authUser.id());
 
-        if (!assignment.getCreatedBy().getId().equals(user.getId()) &&
-            !courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(assignment.getCourse(), user,
-                    List.of(CourseMemberRole.OWNER))) {
+        if (!assignment.getCreatedBy().getId().equals(user.getId()) && !isCourseOwner(assignment.getCourse(), user)) {
             throw new ForbiddenException("Only assignment creator or course owner can delete");
         }
-
-        // 删除提醒
-        // homeworkReminderService.cancelAssignmentReminders(assignmentId); // TODO: implement
 
         assignmentRepository.delete(assignment);
     }
@@ -214,14 +156,12 @@ public class AssignmentService {
             throw new BadRequestException("Assignment does not belong to this course");
         }
 
-        // 检查权限：学生只能查看已发布的作业
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
+        AppUser user = requireUser(authUser.id());
+        if (!isCourseAccessible(assignment.getCourse(), user)) {
+            throw new ForbiddenException("You are not a member of this course");
+        }
 
-        boolean isTeacher = courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(assignment.getCourse(), user,
-                List.of(CourseMemberRole.OWNER, CourseMemberRole.TEACHER));
-
-        if (!assignment.isPublished() && !isTeacher) {
+        if (!assignment.isPublished() && !isTeacher(assignment.getCourse(), user)) {
             throw new ForbiddenException("Assignment is not published");
         }
 
@@ -238,22 +178,37 @@ public class AssignmentService {
         Course course = courseRepository.findById(courseId)
                 .orElseThrow(() -> new NotFoundException("Course not found"));
 
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
+        AppUser user = requireUser(authUser.id());
+        if (!isCourseAccessible(course, user)) {
+            throw new ForbiddenException("You are not a member of this course");
+        }
 
-        boolean isTeacher = courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(course, user,
-                List.of(CourseMemberRole.OWNER, CourseMemberRole.TEACHER));
+        boolean teacher = isTeacher(course, user);
 
         List<Assignment> assignments;
-        if (isTeacher) {
+        if (teacher) {
             assignments = assignmentRepository.findByCourseIdOrderBySortOrderAscCreatedAtAsc(courseId);
         } else {
             assignments = assignmentRepository.findPublishedByCourseId(courseId);
         }
 
+        if (assignments.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> assignmentIds = assignments.stream().map(Assignment::getId).toList();
+        Map<UUID, List<AssignmentTaskItem>> taskItemsByAssignmentId = assignmentTaskItemRepository
+                .findByAssignmentIdsOrderByAssignmentIdAndSortOrderAsc(assignmentIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        item -> item.getAssignment().getId(),
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
         return assignments.stream()
                 .map(assignment -> {
-                    List<AssignmentTaskItem> taskItems = assignmentTaskItemRepository.findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(assignment.getId());
+                    List<AssignmentTaskItem> taskItems = taskItemsByAssignmentId.getOrDefault(assignment.getId(), List.of());
                     List<AssignmentResponse.AssignmentTaskItemResponse> taskItemResponses = taskItems.stream()
                             .map(this::convertToTaskItemResponse)
                             .toList();
@@ -276,26 +231,35 @@ public class AssignmentService {
             throw new BadRequestException("Assignment is not published");
         }
 
+        if (assignment.getStartAt() != null && assignment.getStartAt().isAfter(LocalDateTime.now())) {
+            throw new BadRequestException("Assignment has not started yet");
+        }
+
         if (assignment.getDueAt() != null && assignment.getDueAt().isBefore(LocalDateTime.now())) {
             throw new BadRequestException("Assignment is past due");
         }
 
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
-
-        // 标记之前的提交为非最新
-        List<AssignmentSubmission> previousSubmissions = assignmentSubmissionRepository
-                .findByAssignmentIdAndUserIdOrderBySubmittedAtDesc(assignmentId, user.getId());
-        for (AssignmentSubmission submission : previousSubmissions) {
-            submission.setLatest(false);
-            assignmentSubmissionRepository.save(submission);
+        AppUser user = requireUser(authUser.id());
+        if (!isCourseAccessible(assignment.getCourse(), user)) {
+            throw new ForbiddenException("You are not a member of this course");
+        }
+        if (isTeacher(assignment.getCourse(), user)) {
+            throw new ForbiddenException("Teachers cannot submit assignments");
         }
 
-        // 创建新提交
+        Map<UUID, AssignmentTaskItem> taskItemsById = assignmentTaskItemRepository
+                .findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(assignmentId)
+                .stream()
+                .collect(Collectors.toMap(AssignmentTaskItem::getId, item -> item));
+        Map<UUID, String> normalizedAnswers = normalizeAnswers(request.answers(), taskItemsById);
+
+        assignmentSubmissionRepository.markLatestFalseByAssignmentIdAndUserId(assignmentId, user.getId());
+
         AssignmentSubmission submission = new AssignmentSubmission();
         submission.setAssignment(assignment);
         submission.setSubmittedBy(user);
-        submission.setAnswersJson(convertAnswersToJson(request.answers()));
+        submission.setAnswersJson(writeJson(normalizedAnswers, "Failed to convert answers to JSON"));
+        submission.setItemGradesJson(null);
         submission.setLatest(true);
         submission.setSubmittedAt(LocalDateTime.now());
 
@@ -307,32 +271,49 @@ public class AssignmentService {
     @Transactional
     public AssignmentSubmissionResponse gradeSubmission(UUID courseId, UUID submissionId,
             AssignmentGradeRequest request, AuthenticatedUser authUser) {
-        AssignmentSubmission submission = assignmentSubmissionRepository.findById(submissionId)
+        AssignmentSubmission submission = assignmentSubmissionRepository.findWithRelationsById(submissionId)
                 .orElseThrow(() -> new NotFoundException("Submission not found"));
 
         if (!submission.getAssignment().getCourse().getId().equals(courseId)) {
             throw new BadRequestException("Submission does not belong to this course");
         }
 
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
+        AppUser user = requireUser(authUser.id());
 
-        // 验证用户是否是课程教师
-        if (!courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(submission.getAssignment().getCourse(), user,
-                List.of(CourseMemberRole.OWNER, CourseMemberRole.TEACHER))) {
+        if (!isTeacher(submission.getAssignment().getCourse(), user)) {
             throw new ForbiddenException("Only course teachers can grade submissions");
         }
 
-        // 计算总分（如果提供则使用，否则汇总题目得分）
+        Map<UUID, AssignmentTaskItem> taskItemsById = assignmentTaskItemRepository
+                .findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(submission.getAssignment().getId())
+                .stream()
+                .collect(Collectors.toMap(AssignmentTaskItem::getId, item -> item));
+
+        Map<UUID, ItemGradeSnapshot> gradeMap = new HashMap<>();
+        for (AssignmentGradeRequest.AssignmentItemGrade itemGrade : request.itemGrades()) {
+            AssignmentTaskItem taskItem = taskItemsById.get(itemGrade.taskItemId());
+            if (taskItem == null) {
+                throw new BadRequestException("Grading item does not belong to this assignment");
+            }
+            if (itemGrade.score().compareTo(taskItem.getMaxScore()) > 0) {
+                throw new BadRequestException("Item score cannot exceed max score");
+            }
+            gradeMap.put(itemGrade.taskItemId(), new ItemGradeSnapshot(itemGrade.score(), normalizeNullableText(itemGrade.feedback())));
+        }
+
         BigDecimal totalScore = request.totalScore();
         if (totalScore == null) {
-            totalScore = request.itemGrades().stream()
-                    .map(AssignmentGradeRequest.AssignmentItemGrade::score)
+            totalScore = gradeMap.values().stream()
+                    .map(ItemGradeSnapshot::score)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+        if (totalScore.compareTo(submission.getAssignment().getTotalScore()) > 0) {
+            throw new BadRequestException("Total score cannot exceed assignment total score");
         }
 
         submission.setTotalScore(totalScore);
-        submission.setFeedback(request.feedback());
+        submission.setFeedback(normalizeNullableText(request.feedback()));
+        submission.setItemGradesJson(writeJson(gradeMap, "Failed to convert item grades to JSON"));
         submission.setGradedBy(user);
         submission.setGradedAt(LocalDateTime.now());
 
@@ -350,15 +331,15 @@ public class AssignmentService {
             throw new BadRequestException("Assignment does not belong to this course");
         }
 
-        AppUser user = userRepository.findById(authUser.id())
-                .orElseThrow(() -> new NotFoundException("User not found"));
+        AppUser user = requireUser(authUser.id());
+        if (!isCourseAccessible(assignment.getCourse(), user)) {
+            throw new ForbiddenException("You are not a member of this course");
+        }
 
-        // 教师可以查看所有提交，学生只能查看自己的提交
-        boolean isTeacher = courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(assignment.getCourse(), user,
-                List.of(CourseMemberRole.OWNER, CourseMemberRole.TEACHER));
+        boolean teacher = isTeacher(assignment.getCourse(), user);
 
         List<AssignmentSubmission> submissions;
-        if (isTeacher) {
+        if (teacher) {
             submissions = assignmentSubmissionRepository.findByAssignmentIdOrderBySubmittedAtDesc(assignmentId);
         } else {
             submissions = assignmentSubmissionRepository.findByAssignmentIdAndUserIdOrderBySubmittedAtDesc(assignmentId, user.getId());
@@ -369,16 +350,165 @@ public class AssignmentService {
                 .toList();
     }
 
-    // 辅助方法
-    private String convertOptionsToJson(List<String> options) {
+    private String writeJson(Object value, String errorMessage) {
         try {
-            return objectMapper.writeValueAsString(options);
+            return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to convert options to JSON", e);
+            throw new BadRequestException(errorMessage);
         }
     }
 
+    private AssignmentContext requireTeacherContext(UUID courseId, UUID userId) {
+        Course course = courseRepository.findById(courseId)
+                .orElseThrow(() -> new NotFoundException("Course not found"));
+        AppUser user = requireUser(userId);
+        if (!isTeacher(course, user)) {
+            throw new ForbiddenException("Only course teachers can create assignments");
+        }
+        return new AssignmentContext(course, user);
+    }
+
+    private AppUser requireUser(UUID userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new NotFoundException("User not found"));
+    }
+
+    private boolean isTeacher(Course course, AppUser user) {
+        return isCourseOwner(course, user) || courseMemberRepository.existsByCourseAndUserAndMemberRoleIn(course, user,
+                List.of(CourseMemberRole.TEACHER));
+    }
+
+    private boolean isCourseOwner(Course course, AppUser user) {
+        return course.getOwner().getId().equals(user.getId());
+    }
+
+    private boolean isCourseAccessible(Course course, AppUser user) {
+        if (isCourseOwner(course, user)) {
+            return true;
+        }
+        return courseMemberRepository.existsByCourseIdAndUserId(course.getId(), user.getId());
+    }
+
+    private void validateTimeWindow(LocalDateTime startAt, LocalDateTime dueAt) {
+        if (startAt != null && dueAt != null && dueAt.isBefore(startAt)) {
+            throw new BadRequestException("Due time must be after start time");
+        }
+    }
+
+    private BigDecimal resolveTotalScore(boolean autoCalc, BigDecimal requestTotalScore, List<AssignmentTaskItem> taskItems) {
+        if (autoCalc) {
+            return taskItems.stream()
+                    .map(AssignmentTaskItem::getMaxScore)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+        if (requestTotalScore == null) {
+            throw new BadRequestException("totalScore is required when autoCalculateTotal is false");
+        }
+        return requestTotalScore;
+    }
+
+    private List<AssignmentTaskItem> buildTaskItemsFromCreateRequest(Assignment assignment,
+            List<AssignmentCreateRequest.AssignmentTaskItemRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            throw new BadRequestException("At least one task item is required");
+        }
+        List<AssignmentTaskItem> items = new ArrayList<>();
+        for (int i = 0; i < requests.size(); i++) {
+            AssignmentCreateRequest.AssignmentTaskItemRequest request = requests.get(i);
+            items.add(buildTaskItem(
+                    assignment,
+                    request.question(),
+                    request.questionType(),
+                    request.options(),
+                    request.referenceAnswer(),
+                    request.maxScore(),
+                    request.sortOrder(),
+                    i,
+                    null
+            ));
+        }
+        return items;
+    }
+
+    private List<AssignmentTaskItem> buildTaskItemsFromUpdateRequest(Assignment assignment,
+            List<AssignmentUpdateRequest.AssignmentTaskItemUpdateRequest> requests) {
+        if (requests.isEmpty()) {
+            throw new BadRequestException("At least one task item is required");
+        }
+        List<AssignmentTaskItem> items = new ArrayList<>();
+        for (int i = 0; i < requests.size(); i++) {
+            AssignmentUpdateRequest.AssignmentTaskItemUpdateRequest request = requests.get(i);
+            items.add(buildTaskItem(
+                    assignment,
+                    request.question(),
+                    request.questionType(),
+                    request.options(),
+                    request.referenceAnswer(),
+                    request.maxScore(),
+                    request.sortOrder(),
+                    i,
+                    null
+            ));
+        }
+        return items;
+    }
+
+    private AssignmentTaskItem buildTaskItem(
+            Assignment assignment,
+            String question,
+            LearningQuestionType questionType,
+            List<String> options,
+            String referenceAnswer,
+            BigDecimal maxScore,
+            Integer sortOrder,
+            int fallbackSortOrder,
+            UUID originalTaskId) {
+        AssignmentTaskItem taskItem = new AssignmentTaskItem();
+        taskItem.setAssignment(assignment);
+        taskItem.setQuestion(question.trim());
+        taskItem.setQuestionType(questionType);
+        taskItem.setOptionsJson(convertOptionsToJson(questionType, options));
+        taskItem.setReferenceAnswer(normalizeNullableText(referenceAnswer));
+        taskItem.setMaxScore(maxScore);
+        taskItem.setSortOrder(sortOrder != null ? sortOrder : fallbackSortOrder);
+        taskItem.setOriginalTaskId(originalTaskId);
+        return taskItem;
+    }
+
+    private String normalizeTitle(String title) {
+        String normalized = title == null ? "" : title.trim();
+        if (normalized.isEmpty()) {
+            throw new BadRequestException("Assignment title cannot be blank");
+        }
+        return normalized;
+    }
+
+    private String normalizeNullableText(String text) {
+        if (text == null) {
+            return null;
+        }
+        String normalized = text.trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private String convertOptionsToJson(LearningQuestionType questionType, List<String> options) {
+        List<String> normalized = options == null
+                ? List.of()
+                : options.stream().map(String::trim).filter(opt -> !opt.isEmpty()).toList();
+        if ((questionType == LearningQuestionType.SINGLE_CHOICE || questionType == LearningQuestionType.MULTIPLE_CHOICE)
+                && normalized.size() < 2) {
+            throw new BadRequestException("Choice questions require at least 2 options");
+        }
+        if (questionType == LearningQuestionType.SHORT_ANSWER) {
+            normalized = List.of();
+        }
+        return writeJson(normalized, "Failed to convert options to JSON");
+    }
+
     private List<String> convertJsonToOptions(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
         try {
             return objectMapper.readValue(json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
         } catch (JsonProcessingException e) {
@@ -386,21 +516,47 @@ public class AssignmentService {
         }
     }
 
-    private String convertAnswersToJson(List<AssignmentSubmissionRequest.AssignmentAnswer> answers) {
-        try {
-            Map<UUID, String> answerMap = new HashMap<>();
-            for (AssignmentSubmissionRequest.AssignmentAnswer answer : answers) {
-                answerMap.put(answer.taskItemId(), answer.answer());
-            }
-            return objectMapper.writeValueAsString(answerMap);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to convert answers to JSON", e);
+    private Map<UUID, String> normalizeAnswers(
+            List<AssignmentSubmissionRequest.AssignmentAnswer> answers,
+            Map<UUID, AssignmentTaskItem> taskItemsById) {
+        if (answers == null || answers.isEmpty()) {
+            throw new BadRequestException("Submission answers cannot be empty");
         }
+        Map<UUID, String> answerMap = new LinkedHashMap<>();
+        for (AssignmentSubmissionRequest.AssignmentAnswer answer : answers) {
+            AssignmentTaskItem taskItem = taskItemsById.get(answer.taskItemId());
+            if (taskItem == null) {
+                throw new BadRequestException("Answer task item does not belong to this assignment");
+            }
+            answerMap.put(answer.taskItemId(), answer.answer().trim());
+        }
+        Set<UUID> requiredTaskIds = taskItemsById.keySet();
+        if (!answerMap.keySet().containsAll(requiredTaskIds)) {
+            throw new BadRequestException("All assignment task items must be answered");
+        }
+        return answerMap;
     }
 
     private Map<UUID, String> convertJsonToAnswers(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
         try {
             return objectMapper.readValue(json, objectMapper.getTypeFactory().constructMapType(Map.class, UUID.class, String.class));
+        } catch (JsonProcessingException e) {
+            return Map.of();
+        }
+    }
+
+    private Map<UUID, ItemGradeSnapshot> convertJsonToGradeMap(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(
+                    json,
+                    objectMapper.getTypeFactory().constructMapType(Map.class, UUID.class, ItemGradeSnapshot.class)
+            );
         } catch (JsonProcessingException e) {
             return Map.of();
         }
@@ -445,33 +601,24 @@ public class AssignmentService {
 
     private AssignmentSubmissionResponse convertToSubmissionResponse(AssignmentSubmission submission) {
         Map<UUID, String> answers = convertJsonToAnswers(submission.getAnswersJson());
+        Map<UUID, ItemGradeSnapshot> gradeMap = convertJsonToGradeMap(submission.getItemGradesJson());
 
-        // 获取题目信息并构建答案响应
         List<AssignmentSubmissionResponse.AssignmentAnswerResponse> answerResponses = new ArrayList<>();
-        if (!answers.isEmpty()) {
-            List<AssignmentTaskItem> taskItems = assignmentTaskItemRepository
-                    .findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(submission.getAssignment().getId());
+        List<AssignmentTaskItem> taskItems = assignmentTaskItemRepository
+                .findByAssignmentIdOrderBySortOrderAscCreatedAtAsc(submission.getAssignment().getId());
 
-            Map<UUID, AssignmentTaskItem> taskItemMap = new HashMap<>();
-            for (AssignmentTaskItem item : taskItems) {
-                taskItemMap.put(item.getId(), item);
-            }
-
-            for (Map.Entry<UUID, String> entry : answers.entrySet()) {
-                AssignmentTaskItem item = taskItemMap.get(entry.getKey());
-                if (item != null) {
-                    answerResponses.add(new AssignmentSubmissionResponse.AssignmentAnswerResponse(
-                            item.getId(),
-                            item.getQuestion(),
-                            item.getQuestionType(),
-                            convertJsonToOptions(item.getOptionsJson()),
-                            entry.getValue(),
-                            item.getMaxScore(),
-                            null, // 得分需要从批改记录中获取（简化）
-                            null  // 反馈需要从批改记录中获取
-                    ));
-                }
-            }
+        for (AssignmentTaskItem item : taskItems) {
+            ItemGradeSnapshot grade = gradeMap.get(item.getId());
+            answerResponses.add(new AssignmentSubmissionResponse.AssignmentAnswerResponse(
+                    item.getId(),
+                    item.getQuestion(),
+                    item.getQuestionType(),
+                    convertJsonToOptions(item.getOptionsJson()),
+                    answers.getOrDefault(item.getId(), ""),
+                    item.getMaxScore(),
+                    grade == null ? null : grade.score(),
+                    grade == null ? null : grade.feedback()
+            ));
         }
 
         return new AssignmentSubmissionResponse(
@@ -488,5 +635,11 @@ public class AssignmentService {
                 submission.getCreatedAt(),
                 submission.getUpdatedAt()
         );
+    }
+
+    private record AssignmentContext(Course course, AppUser user) {
+    }
+
+    private record ItemGradeSnapshot(BigDecimal score, String feedback) {
     }
 }

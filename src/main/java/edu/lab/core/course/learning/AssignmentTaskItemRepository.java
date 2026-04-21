@@ -14,5 +14,8 @@ public interface AssignmentTaskItemRepository extends JpaRepository<AssignmentTa
     @Query("select i from AssignmentTaskItem i where i.originalTaskId = :originalTaskId")
     List<AssignmentTaskItem> findByOriginalTaskId(@Param("originalTaskId") UUID originalTaskId);
 
+    @Query("select i from AssignmentTaskItem i where i.assignment.id in :assignmentIds order by i.assignment.id, i.sortOrder asc, i.createdAt asc")
+    List<AssignmentTaskItem> findByAssignmentIdsOrderByAssignmentIdAndSortOrderAsc(@Param("assignmentIds") List<UUID> assignmentIds);
+
     void deleteByAssignmentId(UUID assignmentId);
 }

@@ -12,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -95,4 +96,10 @@ public class CourseLearningTask extends AuditableEntity {
 
 	@Column(name = "sort_order", nullable = false)
 	private int sortOrder;
+
+	@Column(name = "migrated_to_assignment_id")
+	private UUID migratedToAssignmentId;
+
+	@Column(name = "migrated_to_item_id")
+	private UUID migratedToItemId;
 }

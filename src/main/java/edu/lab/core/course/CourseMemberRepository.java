@@ -1,5 +1,6 @@
 package edu.lab.core.course;
 
+import edu.lab.core.user.AppUser;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -13,6 +14,8 @@ public interface CourseMemberRepository extends JpaRepository<CourseMember, UUID
 	boolean existsByCourseIdAndUserId(UUID courseId, UUID userId);
 
 	Optional<CourseMember> findByCourseIdAndUserId(UUID courseId, UUID userId);
+
+	boolean existsByCourseAndUserAndMemberRoleIn(Course course, AppUser user, List<CourseMemberRole> memberRoles);
 
 	@Query("select m from CourseMember m join fetch m.user where m.course.id = :courseId order by m.createdAt asc")
 	List<CourseMember> findMembers(@Param("courseId") UUID courseId);
